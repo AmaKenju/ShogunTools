@@ -1209,12 +1209,6 @@ def main():
 
             return splash
 
-        # Hide root until ready
-        root.withdraw()
-
-        # Start with simple splash screen
-        splash = show_simple_splash()
-
         # Actual application start function
         def start_app():
             try:
@@ -1270,8 +1264,6 @@ def main():
                     app = ShogunButtonUI(root, ip_address, csv_path)
                     print("初期化完了、アプリケーションを起動します")
 
-                    # メインループ開始
-                    root.mainloop()
                 except Exception as e:
                     # 例外をキャッチしてメッセージボックスを表示
                     error_message = f"アプリケーション実行中にエラーが発生しました:\n{str(e)}\n\n"
@@ -1295,6 +1287,11 @@ def main():
                 root.deiconify()  # 必ずウィンドウを表示
                 messagebox.showerror("エラー", f"アプリケーションの起動に失敗しました: {str(e)}")
                 root.destroy()
+
+        # スプラッシュを表示してイベントループを起動
+        root.withdraw()
+        show_simple_splash()
+        root.mainloop()
 
     except Exception as e:
         # メイン関数レベルでのエラー処理
