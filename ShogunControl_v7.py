@@ -1,4 +1,4 @@
-ffrom vicon_core_api import *
+from vicon_core_api import *
 from shogun_live_api import CaptureServices, PlaybackServices, SubjectServices
 import csv
 import tkinter as tk
