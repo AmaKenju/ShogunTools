@@ -94,7 +94,7 @@ class SettingsDialog:
         # ダイアログ作成
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Shogun 接続設定")
-        self.dialog.geometry("600x450")
+        self.dialog.geometry("600x520")
         self.dialog.resizable(False, False)
         self.dialog.transient(parent)
         self.dialog.protocol("WM_DELETE_WINDOW", self.on_cancel)  # 閉じるボタンの処理
@@ -121,8 +121,8 @@ class SettingsDialog:
             screen_width = self.parent.winfo_screenwidth()
             screen_height = self.parent.winfo_screenheight()
             x = (screen_width - 600) // 2
-            y = (screen_height - 450) // 2
-            self.dialog.geometry(f"600x450+{x}+{y}")
+            y = (screen_height - 520) // 2
+            self.dialog.geometry(f"600x520+{x}+{y}")
         except Exception as e:
             print(f"ダイアログ位置の設定エラー: {str(e)}")
 
