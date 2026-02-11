@@ -40,7 +40,7 @@ LIGHT_INFO = "#1E66F5"
 LIGHT_WARNING = "#FE640B"
 LIGHT_MUTED = "#8C8FA1"
 
-FONT = "Segoe UI"
+FONT = "Yu Gothic UI"
 
 class ModernWidget:
     """Helper class for modern widget styling"""
@@ -94,7 +94,7 @@ class SettingsDialog:
         # ダイアログ作成
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Shogun 接続設定")
-        self.dialog.geometry("600x520")
+        self.dialog.geometry("600x580")
         self.dialog.resizable(False, False)
         self.dialog.transient(parent)
         self.dialog.protocol("WM_DELETE_WINDOW", self.on_cancel)  # 閉じるボタンの処理
@@ -121,8 +121,8 @@ class SettingsDialog:
             screen_width = self.parent.winfo_screenwidth()
             screen_height = self.parent.winfo_screenheight()
             x = (screen_width - 600) // 2
-            y = (screen_height - 520) // 2
-            self.dialog.geometry(f"600x520+{x}+{y}")
+            y = (screen_height - 580) // 2
+            self.dialog.geometry(f"600x580+{x}+{y}")
         except Exception as e:
             print(f"ダイアログ位置の設定エラー: {str(e)}")
 
@@ -204,7 +204,7 @@ class SettingsDialog:
             ip_entry.pack(fill=tk.X, pady=5, ipady=8)  # Add internal padding for height
 
             ip_hint = tk.Label(ip_frame, text="例: 192.168.1.100 または localhost",
-                            font=(FONT, 10),
+                            font=(FONT, 11),
                             bg=self.card_color, fg=self.accent_color)
             ip_hint.pack(anchor=tk.W, padx=5, pady=(5, 0))
 
@@ -238,7 +238,7 @@ class SettingsDialog:
             browse_btn.pack(side=tk.LEFT, padx=(10, 0))
 
             csv_hint = tk.Label(csv_frame, text="CSVファイルの各行の最初の列がキャプチャ名として読み込まれます",
-                            font=(FONT, 10),
+                            font=(FONT, 11),
                             bg=self.card_color, fg=self.accent_color)
             csv_hint.pack(anchor=tk.W, padx=5, pady=(5, 0))
 
