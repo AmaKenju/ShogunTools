@@ -7,6 +7,18 @@ import os
 import time
 import sys
 import traceback
+import threading
+import queue
+import json
+
+# Vosk音声認識（オプション）
+USE_VOSK = False
+try:
+    import vosk
+    import sounddevice as sd
+    USE_VOSK = True
+except ImportError:
+    print("vosk/sounddeviceがインストールされていません。音声認識は無効です。")
 
 # Pillowがインストールされていない場合の代替方法
 USE_PIL = False
@@ -41,6 +53,28 @@ LIGHT_WARNING = "#FE640B"
 LIGHT_MUTED = "#8C8FA1"
 
 FONT = "Yu Gothic UI"
+
+# 音声コマンドマッピング（認識テキストに含まれるキーワード → アクション名）
+VOICE_COMMANDS = {
+    "start_capture": ["スタート", "開始", "キャプチャ開始"],
+    "stop_capture": ["ストップ", "停止", "キャプチャ停止"],
+    "enter_playback": ["レビュー開始", "レビュー", "再生"],
+    "exit_review": ["レビュー終了", "レビュー停止"],
+    "next_capture": ["次へ", "次", "ネクスト"],
+    "back_capture": ["前へ", "前", "バック"],
+    "reboot_subjects": ["リブート", "再起動"],
+}
+
+# 表示用の日本語ラベル
+VOICE_COMMAND_LABELS = {
+    "start_capture": "キャプチャ開始",
+    "stop_capture": "キャプチャ停止",
+    "enter_playback": "レビュー開始",
+    "exit_review": "レビュー終了",
+    "next_capture": "次のキャプチャ名",
+    "back_capture": "前のキャプチャ名",
+    "reboot_subjects": "サブジェクト再起動",
+}
 
 class ModernWidget:
     """Helper class for modern widget styling"""
@@ -77,6 +111,156 @@ class ModernWidget:
             print(f"角丸長方形の作成エラー: {str(e)}")
             # フォールバック: 通常の長方形
             return canvas.create_rectangle(x1, y1, x2, y2, **kwargs)
+
+class VoiceController:
+    """Voskを使用したオフライン音声認識コントローラー"""
+
+    def __init__(self, model_path=None, command_queue=None):
+        self.command_queue = command_queue or queue.Queue()
+        self.is_running = False
+        self._stream = None
+        self._recognizer = None
+        self._thread = None
+        self._audio_queue = queue.Queue()
+
+        if not USE_VOSK:
+            print("Voskが利用できないため、音声認識は無効です。")
+            return
+
+        # モデルパスの自動検出
+        if model_path is None:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            candidates = [
+                os.path.join(script_dir, "vosk-model-small-ja"),
+                os.path.join(script_dir, "vosk-model-ja"),
+                os.path.join(script_dir, "model"),
+            ]
+            for path in candidates:
+                if os.path.isdir(path):
+                    model_path = path
+                    break
+
+        if model_path is None or not os.path.isdir(model_path):
+            print(f"Voskモデルが見つかりません。音声認識は無効です。")
+            print(f"日本語モデルをダウンロードして以下のいずれかに配置してください:")
+            print(f"  - vosk-model-small-ja/")
+            print(f"  - vosk-model-ja/")
+            print(f"  - model/")
+            self._model = None
+            return
+
+        try:
+            vosk.SetLogLevel(-1)  # Voskのログ出力を抑制
+            self._model = vosk.Model(model_path)
+            print(f"Voskモデルを読み込みました: {model_path}")
+        except Exception as e:
+            print(f"Voskモデル読み込みエラー: {str(e)}")
+            self._model = None
+
+    def is_available(self):
+        """音声認識が利用可能かどうか"""
+        return USE_VOSK and self._model is not None
+
+    def start(self):
+        """音声認識を開始"""
+        if not self.is_available():
+            return False
+
+        if self.is_running:
+            return True
+
+        try:
+            sample_rate = 16000
+            self._recognizer = vosk.KaldiRecognizer(self._model, sample_rate)
+            self.is_running = True
+
+            # sounddeviceのコールバックで音声データをキューに入れる
+            def audio_callback(indata, frames, time_info, status):
+                if status:
+                    print(f"Audio status: {status}")
+                if self.is_running:
+                    self._audio_queue.put(bytes(indata))
+
+            self._stream = sd.RawInputStream(
+                samplerate=sample_rate,
+                blocksize=8000,
+                dtype="int16",
+                channels=1,
+                callback=audio_callback,
+            )
+            self._stream.start()
+
+            # 認識処理用のバックグラウンドスレッド
+            self._thread = threading.Thread(target=self._recognize_loop, daemon=True)
+            self._thread.start()
+
+            print("音声認識を開始しました")
+            return True
+        except Exception as e:
+            print(f"音声認識開始エラー: {str(e)}")
+            self.is_running = False
+            return False
+
+    def stop(self):
+        """音声認識を停止"""
+        self.is_running = False
+        try:
+            if self._stream is not None:
+                self._stream.stop()
+                self._stream.close()
+                self._stream = None
+        except Exception as e:
+            print(f"音声ストリーム停止エラー: {str(e)}")
+
+        # キューをクリア
+        while not self._audio_queue.empty():
+            try:
+                self._audio_queue.get_nowait()
+            except queue.Empty:
+                break
+
+        print("音声認識を停止しました")
+
+    def _recognize_loop(self):
+        """バックグラウンドで音声認識を実行するループ"""
+        while self.is_running:
+            try:
+                data = self._audio_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+
+            if self._recognizer.AcceptWaveform(data):
+                result = json.loads(self._recognizer.Result())
+                text = result.get("text", "").strip()
+                if text:
+                    self._match_command(text)
+            else:
+                # 部分認識結果（リアルタイムフィードバック用）
+                partial = json.loads(self._recognizer.PartialResult())
+                partial_text = partial.get("partial", "").strip()
+                if partial_text:
+                    self.command_queue.put(("partial", partial_text))
+
+    def _match_command(self, text):
+        """認識テキストからコマンドをマッチング"""
+        print(f"音声認識: 「{text}」")
+
+        # 長いキーワードから先にマッチさせる（部分一致の誤爆を防ぐ）
+        for action, keywords in sorted(
+            VOICE_COMMANDS.items(),
+            key=lambda x: max(len(k) for k in x[1]),
+            reverse=True,
+        ):
+            for keyword in sorted(keywords, key=len, reverse=True):
+                if keyword in text:
+                    label = VOICE_COMMAND_LABELS.get(action, action)
+                    print(f"音声コマンド検出: {label}")
+                    self.command_queue.put(("command", action))
+                    return
+
+        # マッチしなかった場合
+        self.command_queue.put(("unrecognized", text))
+
 
 class SettingsDialog:
     def __init__(self, parent, is_dark_mode=False):
@@ -371,9 +555,18 @@ class ShogunButtonUI:
             except Exception as e:
                 print(f"初期キャプチャ名設定エラー: {str(e)}")
 
+        # 音声認識コントローラー初期化
+        self.voice_command_queue = queue.Queue()
+        self.voice_controller = VoiceController(command_queue=self.voice_command_queue)
+        self.voice_active = False
+        self.voice_partial_var = tk.StringVar(value="")
+
         # UI作成
         self.create_ui()
         self.create_progress_canvas()
+
+        # 音声コマンドのポーリング開始
+        self._check_voice_commands()
 
     def connect_to_shogun(self, ip_address):
         """Shogunサーバーに接続する"""
@@ -581,9 +774,34 @@ class ShogunButtonUI:
             settings_btn = tk.Button(controls_frame, text="⚙", command=self.open_settings, **ctrl_btn_style)
             settings_btn.pack(side=tk.RIGHT, padx=3)
 
+            # マイクボタン（音声認識が利用可能な場合のみ表示）
+            if self.voice_controller.is_available():
+                mic_color = DARK_SUCCESS if self.voice_active else self.bg_color
+                mic_fg = DARK_BG if self.voice_active else self.text_color
+                self.mic_btn = tk.Button(
+                    controls_frame, text="🎤",
+                    command=self.toggle_voice,
+                    font=(FONT, 15), bg=mic_color, fg=mic_fg,
+                    bd=0, relief="flat", padx=10, pady=6,
+                    activebackground=self.button_color, cursor="hand2"
+                )
+                self.mic_btn.pack(side=tk.RIGHT, padx=3)
+
             # Accent separator line below header
             sep = tk.Frame(outer_header, bg=self.accent_color, height=2)
             sep.pack(fill=tk.X)
+
+            # 音声認識の部分認識テキスト表示（ヘッダー下）
+            if self.voice_controller.is_available():
+                self.voice_feedback_frame = tk.Frame(outer_header, bg=self.bg_color, height=24)
+                self.voice_feedback_frame.pack(fill=tk.X)
+                self.voice_feedback_label = tk.Label(
+                    self.voice_feedback_frame, textvariable=self.voice_partial_var,
+                    font=(FONT, 10), bg=self.bg_color,
+                    fg=DARK_MUTED if self.is_dark_mode else LIGHT_MUTED,
+                    anchor=tk.W
+                )
+                self.voice_feedback_label.pack(side=tk.LEFT, padx=15)
 
         except Exception as e:
             print(f"ヘッダー作成エラー: {str(e)}")
@@ -997,6 +1215,79 @@ class ShogunButtonUI:
         except Exception as e:
             print(f"ステータス更新エラー: {str(e)}")
 
+    def toggle_voice(self):
+        """音声認識のON/OFFを切り替え"""
+        try:
+            if self.voice_active:
+                self.voice_controller.stop()
+                self.voice_active = False
+                self.voice_partial_var.set("")
+                self.update_status("音声認識を無効にしました", "info")
+            else:
+                if self.voice_controller.start():
+                    self.voice_active = True
+                    self.update_status("音声認識を有効にしました - コマンドを話してください", "success")
+                else:
+                    self.update_status("音声認識の開始に失敗しました", "error")
+                    return
+
+            # マイクボタンの見た目を更新
+            if hasattr(self, "mic_btn") and self.mic_btn.winfo_exists():
+                if self.voice_active:
+                    self.mic_btn.configure(
+                        bg=DARK_SUCCESS if self.is_dark_mode else LIGHT_SUCCESS,
+                        fg=DARK_BG
+                    )
+                else:
+                    self.mic_btn.configure(bg=self.bg_color, fg=self.text_color)
+        except Exception as e:
+            self.update_status(f"音声認識エラー: {str(e)}", "error")
+            print(f"音声認識トグルエラー: {str(e)}")
+
+    def _check_voice_commands(self):
+        """音声コマンドキューを定期的にチェック"""
+        try:
+            while not self.voice_command_queue.empty():
+                msg_type, data = self.voice_command_queue.get_nowait()
+
+                if msg_type == "command":
+                    self.voice_partial_var.set("")
+                    self._execute_voice_command(data)
+                elif msg_type == "partial":
+                    self.voice_partial_var.set(f"🎤 {data}")
+                elif msg_type == "unrecognized":
+                    self.voice_partial_var.set(f"🎤 {data}")
+                    # 2秒後にクリア
+                    self.root.after(2000, lambda: self.voice_partial_var.set("")
+                                   if self.voice_partial_var.get().endswith(data) else None)
+        except Exception as e:
+            print(f"音声コマンドチェックエラー: {str(e)}")
+
+        # 100msごとにポーリング
+        self.root.after(100, self._check_voice_commands)
+
+    def _execute_voice_command(self, action):
+        """音声コマンドを実行"""
+        label = VOICE_COMMAND_LABELS.get(action, action)
+        self.update_status(f"音声コマンド: {label}", "info")
+
+        command_map = {
+            "start_capture": self.start_capture,
+            "stop_capture": self.stop_capture,
+            "enter_playback": self.enter_playback,
+            "exit_review": self.exit_review,
+            "next_capture": self.next_capture_name,
+            "back_capture": self.back_capture_name,
+            "reboot_subjects": self.all_subject_reboot,
+        }
+
+        func = command_map.get(action)
+        if func:
+            try:
+                func()
+            except Exception as e:
+                self.update_status(f"コマンド実行エラー: {str(e)}", "error")
+
     def toggle_theme(self):
         """Toggle between light and dark mode"""
         try:
@@ -1070,7 +1361,7 @@ class ShogunButtonUI:
         try:
             help_dialog = tk.Toplevel(self.root)
             help_dialog.title("使い方")
-            help_dialog.geometry("650x500")
+            help_dialog.geometry("650x700")
             help_dialog.configure(bg=self.bg_color)
 
             # Center on parent
@@ -1105,6 +1396,16 @@ class ShogunButtonUI:
                 ("サブジェクト操作", [
                     "全サブジェクト再起動: すべてのサブジェクトを無効化し、再度有効化します",
                     "この操作は注意して使用してください"
+                ]),
+                ("音声認識操作", [
+                    "🎤ボタンで音声認識のON/OFFを切り替えます",
+                    "「スタート」「開始」: キャプチャ開始",
+                    "「ストップ」「停止」: キャプチャ停止",
+                    "「レビュー」「再生」: レビュー開始",
+                    "「レビュー終了」: レビュー終了",
+                    "「次」「次へ」: 次のキャプチャ名",
+                    "「前」「前へ」: 前のキャプチャ名",
+                    "「リブート」「再起動」: サブジェクト再起動",
                 ]),
                 ("その他の機能", [
                     "設定: 接続先サーバーとCSVファイルを変更できます",
