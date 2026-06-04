@@ -11,6 +11,27 @@ import threading
 import queue
 import json
 
+import post_pipeline
+
+# ===== Post Process パイプライン設定（環境に合わせて編集してください）=====
+# True にすると、キャプチャ停止時に「完了待ち→PC-Aからローカルへコピー→
+# 常駐ShogunPostCLでPost Process」を自動実行します（撮影は継続可能）。
+ENABLE_POST_PIPELINE = False
+POST_PIPELINE_CONFIG = dict(
+    # PC-B（このアプリのPC）側のコピー先ルート
+    local_dest_root=r"E:\Incoming",
+    # 撮影マシン(PC-A)のローカルパス -> 共有(UNC) への変換規則（前方一致）。
+    # 例: D:\ShogunData に保存され \\CAP-PC\ShogunData で共有されている場合:
+    #   path_map=[(r"D:\ShogunData", r"\\CAP-PC\ShogunData")]
+    # 規則に当たらない場合は管理共有 (\\<host>\D$\...) を自動で試します。
+    path_map=[],
+    level="solve",        # reconstruct / label / solve
+    out_format="hdf",     # hdf / vdf / c3d / bvh / fbx
+    subjects=[],          # ラベル/ソルブに使う VSK（任意）
+)
+# ※ capture_host（PC-A）は Shogun 接続時の IP アドレスを自動利用します。
+# =======================================================================
+
 # Vosk音声認識（オプション）
 USE_VOSK = False
 try:
@@ -568,6 +589,17 @@ class ShogunButtonUI:
         # 音声コマンドのポーリング開始
         self._check_voice_commands()
 
+        # Post Process パイプライン（停止時に自動コピー＋Post Process）
+        self.post_worker = None
+        self.capture_relay = None
+        self.pipeline_log_queue = queue.Queue()
+        self._check_pipeline_logs()
+        self._init_post_pipeline(ip_address)
+        try:
+            self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        except Exception as e:
+            print(f"終了ハンドラ設定エラー: {str(e)}")
+
     def connect_to_shogun(self, ip_address):
         """Shogunサーバーに接続する"""
         try:
@@ -1082,10 +1114,69 @@ class ShogunButtonUI:
             self.root.after(500, lambda: self.show_progress_animation(False))
 
             self.update_status("キャプチャを停止しました", "success")
+
+            # Post Process パイプライン: 完了待ち→コピー→Post Process をバックグラウンド起動
+            if self.capture_relay:
+                self.capture_relay.on_capture_stopped()
+                self.update_status("停止: Post Process パイプラインを起動しました（バックグラウンド）", "info")
         except Exception as e:
             self.show_progress_animation(False)
             self.update_status(f"エラー: {str(e)}", "error")
             messagebox.showerror("エラー", f"キャプチャ停止エラー: {str(e)}")
+
+    # ------------------------------------------------------------------
+    # Post Process パイプライン
+    # ------------------------------------------------------------------
+    def _pipeline_log(self, message):
+        """ワーカー/リレー（別スレッド）からのログをUIスレッドへ安全に渡す。"""
+        try:
+            self.pipeline_log_queue.put(str(message))
+        except Exception:
+            print(message)
+
+    def _check_pipeline_logs(self):
+        """パイプラインのログキューを定期的にUIへ反映する（メインスレッド）。"""
+        try:
+            while not self.pipeline_log_queue.empty():
+                msg = self.pipeline_log_queue.get_nowait()
+                print(f"[Pipeline] {msg}")
+                self.update_status(msg, "info")
+        except Exception as e:
+            print(f"パイプラインログ処理エラー: {str(e)}")
+        self.root.after(200, self._check_pipeline_logs)
+
+    def _init_post_pipeline(self, capture_host):
+        """Post Process パイプライン（常駐ワーカー＋リレー）を初期化する。"""
+        if not ENABLE_POST_PIPELINE:
+            return
+        try:
+            cfg = post_pipeline.PipelineConfig(
+                capture_host=capture_host, **POST_PIPELINE_CONFIG
+            )
+            self.post_worker = post_pipeline.PostProcessWorker(cfg, log=self._pipeline_log)
+            self.capture_relay = post_pipeline.CaptureRelay(
+                self.ShogunCap, self.post_worker, cfg, log=self._pipeline_log
+            )
+            self.update_status("Post Process パイプライン有効（ワーカー起動中）", "success")
+        except Exception as e:
+            print(f"Post Process パイプライン初期化エラー: {str(e)}")
+            traceback.print_exc()
+            self.update_status(f"パイプライン初期化失敗: {str(e)}", "error")
+
+    def _on_close(self):
+        """ウィンドウを閉じる際に常駐ワーカーを停止してから終了する。"""
+        try:
+            if self.post_worker:
+                self.update_status("Post Process ワーカーを停止しています...", "processing")
+                self.root.update()
+                self.post_worker.shutdown(wait=True)
+        except Exception as e:
+            print(f"ワーカー停止エラー: {str(e)}")
+        finally:
+            try:
+                self.root.destroy()
+            except Exception:
+                pass
 
     def enter_playback(self):
         """Enter review mode"""
