@@ -26,7 +26,7 @@ POST_PIPELINE_CONFIG = dict(
     # 規則に当たらない場合は管理共有 (\\<host>\D$\...) を自動で試します。
     path_map=[],
     level="solve",        # reconstruct / label / solve
-    out_format="hdf",     # hdf / vdf / c3d / bvh / fbx
+    out_format="fbx",     # fbx / c3d / trc（hdf/vdf はヘッドレス非対応）
     subjects=[],          # ラベル/ソルブに使う VSK（任意）
 )
 # ※ capture_host（PC-A）は Shogun 接続時の IP アドレスを自動利用します。

@@ -41,8 +41,8 @@ class PipelineConfig:
         local_dest_root,              # PC-B 側のコピー先ルートフォルダ
         path_map=None,                # [(local_prefix, unc_prefix), ...] 変換規則（前方一致）
         use_admin_share_fallback=True,  # 規則に当たらない時 D:\x -> \\host\D$\x を試す
-        level="solve",                # reconstruct / label / solve
-        out_format="hdf",             # hdf / vdf / c3d / bvh / fbx
+        level="solve",                # reconstruct / label / solve（QuickPost の procLevel）
+        out_format="fbx",             # fbx / c3d / trc（hdf/vdf はヘッドレス非対応）
         subjects=None,                # 読み込む VSK（任意）
         cl_path=None,                 # ShogunPostCL.exe（省略時自動）
         address="localhost",          # ShogunPostCL の SDK 接続先
@@ -73,13 +73,6 @@ class PipelineConfig:
             os.path.dirname(os.path.abspath(__file__)), "logs"
         )
 
-    @property
-    def do_label(self):
-        return self.level in ("label", "solve")
-
-    @property
-    def do_solve(self):
-        return self.level == "solve"
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +235,7 @@ class PostProcessWorker:
             try:
                 ok, msg = spb.process_one(
                     self._v, self._Offline, x2d, self.config.subjects,
-                    self.config.do_label, self.config.do_solve, self.config.out_format,
+                    self.config.level, self.config.out_format,
                 )
                 self.log(f"ワーカー: 完了 {msg}（{time.time()-t0:.1f}s）")
             except Exception as e:

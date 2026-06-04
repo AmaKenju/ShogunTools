@@ -2,8 +2,14 @@
 ShogunPostBatch.py
 ==================
 指定フォルダ内の X2D ファイルを ShogunPostCL.exe（ヘッドレス）で
-バッチ再計算（Post Process: Reconstruct → AutoLabel → Solve）し、
-X2D と同じ場所に同名で保存するツール（既定 .hdf、--format で .vdf 等も可）。
+バッチ再計算（Post Process）し、X2D と同じ場所に同名でエクスポートするツール。
+処理は Offline.QuickPost、保存は ExportFile を使う（既定 .fbx）。
+
+重要（実機検証で判明した制約）:
+  - HDF のネイティブ保存(SaveFile)はヘッドレスで ShogunPostCL がクラッシュするため不可。
+    vdf エクスポータも未搭載。動作確認済みの出力は fbx / c3d / trc。
+  - Reconstruct→AutoLabel→Solve を個別に順次呼ぶとクラッシュするため、
+    QuickPost（x2d オフライン処理専用）に一本化している。
 
 仕組み:
   1. インストール済みの ViconShogunPostSDK のバージョンに合う
@@ -199,8 +205,30 @@ def shutdown_cl(proc):
 # ---------------------------------------------------------------------------
 # 1 ファイルの処理
 # ---------------------------------------------------------------------------
-def process_one(v, Offline, x2d_path, subjects, do_label, do_solve, out_format):
-    """X2D を 1 つ処理して指定形式で保存する。(成功bool, メッセージ) を返す。"""
+# QuickPost の処理レベルへのマッピング（--level → procLevel）
+_PROC_LEVEL = {"reconstruct": "Reconstruct", "label": "Label", "solve": "Solve"}
+
+# ヘッドレスで保存できない形式（実機検証で判明）:
+#   - hdf  : SaveFile が ShogunPostCL をクラッシュさせる / hdf エクスポータも無い
+#   - vdf  : エクスポータ未搭載（File exporter for type "vdf" not found）
+#   - bvh  : このデータでは Failed to export
+# 動作確認済み: fbx（ソルブ済み骨格アニメ）, c3d, trc
+_UNSUPPORTED_FORMATS = {"hdf", "vdf"}
+
+
+def process_one(v, Offline, x2d_path, subjects, level, out_format):
+    """X2D を 1 つ処理して指定形式でエクスポートする。(成功bool, メッセージ) を返す。
+
+    処理は Offline.QuickPost（x2d オフライン処理専用の一括メソッド）を使う。
+    個別の Reconstruct→AutoLabel→Solve を順次呼ぶと ShogunPostCL がクラッシュ
+    するため、QuickPost に一本化している。
+    """
+    if out_format in _UNSUPPORTED_FORMATS:
+        raise RuntimeError(
+            f"{out_format} はヘッドレス保存に未対応です（SaveFile クラッシュ/エクスポータ無し）。"
+            "fbx / c3d / trc を使用してください。"
+        )
+
     out_path = os.path.splitext(x2d_path)[0] + "." + out_format
     steps = []
 
@@ -208,30 +236,31 @@ def process_one(v, Offline, x2d_path, subjects, do_label, do_solve, out_format):
     v.ImportFile(x2d_path, "selCreateNew")
     steps.append("import")
 
+    # 任意: ラベル/ソルブ用の VSK を読み込む（データにサブジェクトが無い場合）
     for vsk in subjects:
         v.ImportFile(vsk, "selCreateNew")
     if subjects:
         steps.append("subjects")
 
+    # Post Process（Reconstruct/Label/Solve を QuickPost で安定実行）
+    proc_level = _PROC_LEVEL[level]
     off = Offline()
-    off.Reconstruct(Offline.PLAY_RANGE)
-    steps.append("reconstruct")
+    off.QuickPost(proc_level, Offline.PLAY_RANGE)
+    steps.append("quickpost:" + proc_level)
 
-    if do_label:
-        off.AutoLabel(Offline.SUBJECTS_ALL, Offline.PLAY_RANGE)
-        steps.append("label")
-
-    if do_solve:
-        off.Solve(Offline.PLAY_RANGE)
-        steps.append("solve")
-
-    # hdf はネイティブ保存(SaveFile)、それ以外(vdf/c3d/bvh/fbx 等)はエクスポート(ExportFile)。
-    # ※ SaveFile に vdf を渡すと応答停止するため、必ず ExportFile を使う。
-    if out_format == "hdf":
-        v.SaveFile(out_path)
-    else:
-        v.ExportFile(out_path, out_format)
-    steps.append("save")
+    # エクスポート（既存ファイルを消してから）
+    if os.path.exists(out_path):
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
+    v.ExportFile(out_path, out_format)
+    # ExportFile はエクスポータ不在/失敗でも例外を出さないため、生成を検証する
+    if not (os.path.exists(out_path) and os.path.getsize(out_path) > 0):
+        raise RuntimeError(
+            f"エクスポート失敗（{out_format} 非対応 or エクスポータ未搭載の可能性）: {out_path}"
+        )
+    steps.append("export:" + out_format)
 
     return True, f"{os.path.basename(out_path)} ({'+'.join(steps)})"
 
@@ -239,14 +268,15 @@ def process_one(v, Offline, x2d_path, subjects, do_label, do_solve, out_format):
 # ---------------------------------------------------------------------------
 # バッチ本体
 # ---------------------------------------------------------------------------
-def run_batch(x2d_files, subjects, do_label, do_solve, out_format, cl_path, address, port,
+def run_batch(x2d_files, subjects, level, out_format, cl_path, address, port,
               connect_timeout, log_path):
     ViconShogunPost, Offline = import_sdk()
 
     print(f"ShogunPostCL : {cl_path}")
     print(f"SDK バージョン: {sdk_version()}")
     print(f"接続先        : {address}:{port}")
-    print(f"保存形式      : .{out_format}")
+    print(f"処理レベル    : {level} (QuickPost:{_PROC_LEVEL[level]})")
+    print(f"出力形式      : .{out_format}")
     print(f"ログ          : {log_path}")
     print("-" * 64)
 
@@ -270,7 +300,7 @@ def run_batch(x2d_files, subjects, do_label, do_solve, out_format, cl_path, addr
             print(f"[{i}/{total}] {name} を処理中...", flush=True)
             t0 = time.time()
             try:
-                ok, msg = process_one(v, Offline, x2d, subjects, do_label, do_solve, out_format)
+                ok, msg = process_one(v, Offline, x2d, subjects, level, out_format)
                 dt = time.time() - t0
                 print(f"    OK  {msg}  ({dt:.1f}s)", flush=True)
                 results.append((x2d, True, msg))
@@ -299,24 +329,26 @@ def run_batch(x2d_files, subjects, do_label, do_solve, out_format, cl_path, addr
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(
-        description="X2D を ShogunPostCL でバッチ再計算（Post Process）して .hdf 保存する。"
+        description="X2D を ShogunPostCL でバッチ再計算（QuickPost）して fbx 等にエクスポートする。"
     )
     parser.add_argument("directory", nargs="?", help="X2D ファイルが入っているフォルダ")
     parser.add_argument("--recursive", "-r", action="store_true",
                         help="サブフォルダも再帰的に検索する")
     parser.add_argument("--level", choices=["reconstruct", "label", "solve"], default="solve",
-                        help="処理の深さ: reconstruct / label(=+AutoLabel) / solve(=+Solve, 既定)")
+                        help="処理の深さ: reconstruct / label / solve(既定)。QuickPost の procLevel")
     parser.add_argument("--subjects", nargs="*", default=[],
                         help="読み込む VSK ファイル（複数可、またはフォルダ）。省略時は読み込まない")
     parser.add_argument("--format", dest="out_format",
-                        choices=["hdf", "vdf", "c3d", "bvh", "fbx"], default="hdf",
-                        help="保存形式（既定 hdf）。hdf はネイティブ保存、それ以外はエクスポート")
+                        choices=["fbx", "c3d", "trc"], default="fbx",
+                        help="エクスポート形式（既定 fbx）。※hdf/vdf はヘッドレス非対応")
     parser.add_argument("--cl-path", default=None,
                         help="ShogunPostCL.exe のパス（省略時は SDK バージョンに合わせて自動検出）")
     parser.add_argument("--address", default="localhost", help="接続先アドレス（既定 localhost）")
     parser.add_argument("--port", type=int, default=803, help="SDK 制御ポート（既定 803）")
     parser.add_argument("--connect-timeout", type=float, default=90.0,
                         help="接続リトライのタイムアウト秒数（既定 90）")
+    parser.add_argument("--limit", type=int, default=0,
+                        help="先頭 N 件だけ処理する（0=全件、テスト用）")
     parser.add_argument("--dry-run", action="store_true",
                         help="対象ファイルの列挙だけ行い、実行しない")
     args = parser.parse_args()
@@ -325,9 +357,6 @@ def main():
     if not directory:
         directory = input("X2D フォルダのパスを入力してください: ").strip().strip('"')
     directory = os.path.abspath(directory)
-
-    do_label = args.level in ("label", "solve")
-    do_solve = args.level == "solve"
 
     # サブジェクト VSK の解決
     subjects = []
@@ -351,12 +380,12 @@ def main():
               + ("（--recursive で再帰検索できます）" if not args.recursive else ""))
         return 1
 
+    if args.limit and args.limit > 0:
+        x2d_files = x2d_files[:args.limit]
+
     print(f"対象フォルダ : {directory}")
-    print(f"処理レベル   : {args.level}"
-          + ("（label/solve は VSK 未指定。X2D/HDF にサブジェクトが無いと空振りの可能性）"
-             if (do_label or do_solve) and not subjects else ""))
-    print(f"保存形式     : .{args.out_format}"
-          + ("（ネイティブ保存）" if args.out_format == "hdf" else "（エクスポート）"))
+    print(f"処理レベル   : {args.level}（QuickPost）")
+    print(f"出力形式     : .{args.out_format}（エクスポート）")
     print(f"X2D ファイル : {len(x2d_files)} 件")
     for f in x2d_files:
         print("   - " + os.path.basename(f))
@@ -384,7 +413,7 @@ def main():
 
     print("-" * 64)
     start = time.time()
-    results = run_batch(x2d_files, subjects, do_label, do_solve, args.out_format, cl_path,
+    results = run_batch(x2d_files, subjects, args.level, args.out_format, cl_path,
                         args.address, args.port, args.connect_timeout, log_path)
     elapsed = time.time() - start
 
