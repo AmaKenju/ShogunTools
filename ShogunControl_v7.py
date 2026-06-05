@@ -13,14 +13,35 @@ import json
 
 import post_pipeline
 
-ENABLE_POST_PIPELINE = False
-POST_PIPELINE_CONFIG = dict(
-    local_dest_root=r"E:\Incoming",
-    path_map=[],
-    level="solve",
-    out_format="fbx",
-    subjects=[],
+PIPELINE_SETTINGS_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "pipeline_settings.json"
 )
+PIPELINE_DEFAULTS = {
+    "enabled": False,
+    "local_dest_root": "",
+    "src_prefix": "",
+    "unc_prefix": "",
+    "level": "solve",
+    "out_format": "fbx",
+}
+
+
+def load_pipeline_settings():
+    s = dict(PIPELINE_DEFAULTS)
+    try:
+        with open(PIPELINE_SETTINGS_FILE, encoding="utf-8") as f:
+            s.update(json.load(f))
+    except (OSError, ValueError):
+        pass
+    return s
+
+
+def save_pipeline_settings(s):
+    try:
+        with open(PIPELINE_SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(s, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        print(f"パイプライン設定の保存エラー: {str(e)}")
 
 # Vosk音声認識（オプション）
 USE_VOSK = False
@@ -522,6 +543,128 @@ class SettingsDialog:
         """キャンセルボタンが押されたときの処理"""
         self.dialog.destroy()
 
+
+class PipelineSettingsDialog:
+    """Post Process パイプラインの設定を都度入力するダイアログ。"""
+
+    def __init__(self, parent, is_dark_mode=False, settings=None):
+        self.result = None
+        self.parent = parent
+        self.is_dark_mode = is_dark_mode
+
+        self.bg_color = DARK_BG if is_dark_mode else LIGHT_BG
+        self.fg_color = DARK_TEXT if is_dark_mode else LIGHT_TEXT
+        self.card_color = DARK_CARD if is_dark_mode else LIGHT_CARD
+        self.accent_color = DARK_ACCENT if is_dark_mode else LIGHT_ACCENT
+        self.button_color = DARK_BUTTON if is_dark_mode else LIGHT_BUTTON
+
+        s = settings or {}
+        self.enabled = tk.BooleanVar(value=bool(s.get("enabled", False)))
+        self.local_dest_root = tk.StringVar(value=s.get("local_dest_root", ""))
+        self.src_prefix = tk.StringVar(value=s.get("src_prefix", ""))
+        self.unc_prefix = tk.StringVar(value=s.get("unc_prefix", ""))
+        self.level = tk.StringVar(value=s.get("level", "solve"))
+        self.out_format = tk.StringVar(value=s.get("out_format", "fbx"))
+
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("Post Process パイプライン設定")
+        self.dialog.geometry("640x720")
+        self.dialog.resizable(False, False)
+        self.dialog.transient(parent)
+        self.dialog.configure(bg=self.bg_color)
+        self.dialog.grab_set()
+        self.dialog.protocol("WM_DELETE_WINDOW", self.on_cancel)
+
+        self.create_widgets()
+
+        self.dialog.update_idletasks()
+        try:
+            sw, sh = parent.winfo_screenwidth(), parent.winfo_screenheight()
+            self.dialog.geometry(f"640x720+{(sw-640)//2}+{max(0,(sh-720)//2)}")
+        except Exception:
+            pass
+        self.dialog.lift()
+        self.dialog.focus_force()
+
+    def _field(self, parent, label, var, hint, browse=False):
+        frame = tk.Frame(parent, bg=self.card_color, padx=16, pady=12)
+        frame.pack(fill=tk.X, pady=6)
+        tk.Label(frame, text=label, font=(FONT, 11, "bold"),
+                 bg=self.card_color, fg=self.fg_color).pack(anchor=tk.W)
+        row = tk.Frame(frame, bg=self.card_color)
+        row.pack(fill=tk.X, pady=(6, 0))
+        entry = tk.Entry(row, textvariable=var, font=(FONT, 11),
+                         bg=self.bg_color, fg=self.fg_color, insertbackground=self.fg_color)
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=5)
+        if browse:
+            tk.Button(row, text="参照...", font=(FONT, 10), command=lambda: self._browse(var),
+                      bg=self.button_color, fg=self.fg_color, relief="flat", padx=10).pack(
+                          side=tk.LEFT, padx=(8, 0))
+        if hint:
+            tk.Label(frame, text=hint, font=(FONT, 9),
+                     bg=self.card_color, fg=self.accent_color).pack(anchor=tk.W, pady=(4, 0))
+
+    def _browse(self, var):
+        path = filedialog.askdirectory(title="コピー先フォルダを選択")
+        if path:
+            var.set(path)
+
+    def create_widgets(self):
+        main = tk.Frame(self.dialog, bg=self.bg_color, padx=20, pady=20)
+        main.pack(fill=tk.BOTH, expand=True)
+
+        btns = tk.Frame(main, bg=self.bg_color)
+        btns.pack(side=tk.BOTTOM, fill=tk.X, pady=(14, 0))
+        tk.Button(btns, text="保存して適用", font=(FONT, 11, "bold"), command=self.on_ok,
+                  bg=self.accent_color, fg=self.bg_color, relief="flat", padx=18, pady=8).pack(
+                      side=tk.RIGHT, padx=5)
+        tk.Button(btns, text="キャンセル", font=(FONT, 11), command=self.on_cancel,
+                  bg=self.bg_color, fg=self.fg_color, relief="flat", bd=1, padx=14, pady=8,
+                  highlightthickness=1, highlightbackground=self.fg_color).pack(side=tk.RIGHT, padx=5)
+
+        tk.Label(main, text="Post Process パイプライン設定", font=(FONT, 16, "bold"),
+                 bg=self.bg_color, fg=self.fg_color).pack(anchor=tk.W, pady=(0, 12))
+
+        tk.Checkbutton(main, text="このパイプラインを有効にする（停止時に自動で実行）",
+                       variable=self.enabled, font=(FONT, 11, "bold"),
+                       bg=self.bg_color, fg=self.fg_color, selectcolor=self.card_color,
+                       activebackground=self.bg_color, activeforeground=self.fg_color).pack(
+                           anchor=tk.W, pady=(0, 10))
+
+        self._field(main, "コピー先フォルダ（このPC）", self.local_dest_root,
+                    "撮影データをこのPCへコピーする先", browse=True)
+        self._field(main, "撮影PCのローカルパス接頭辞", self.src_prefix,
+                    "例: D:\\ShogunData （Shogun Live が保存するパスの先頭）")
+        self._field(main, "共有(UNC)接頭辞", self.unc_prefix,
+                    "例: \\\\CAP-PC\\ShogunData （上記を共有したパス。空なら \\\\IP\\D$ を自動使用）")
+
+        opt = tk.Frame(main, bg=self.bg_color)
+        opt.pack(fill=tk.X, pady=(6, 0))
+        tk.Label(opt, text="処理レベル:", font=(FONT, 11), bg=self.bg_color,
+                 fg=self.fg_color).pack(side=tk.LEFT)
+        tk.OptionMenu(opt, self.level, "reconstruct", "label", "solve").pack(side=tk.LEFT, padx=(6, 20))
+        tk.Label(opt, text="出力形式:", font=(FONT, 11), bg=self.bg_color,
+                 fg=self.fg_color).pack(side=tk.LEFT)
+        tk.OptionMenu(opt, self.out_format, "fbx", "c3d", "trc").pack(side=tk.LEFT, padx=6)
+
+    def on_ok(self):
+        if self.enabled.get() and not self.local_dest_root.get().strip():
+            messagebox.showerror("エラー", "有効にする場合はコピー先フォルダを指定してください")
+            return
+        self.result = {
+            "enabled": self.enabled.get(),
+            "local_dest_root": self.local_dest_root.get().strip(),
+            "src_prefix": self.src_prefix.get().strip(),
+            "unc_prefix": self.unc_prefix.get().strip(),
+            "level": self.level.get(),
+            "out_format": self.out_format.get(),
+        }
+        self.dialog.destroy()
+
+    def on_cancel(self):
+        self.dialog.destroy()
+
+
 class ShogunButtonUI:
     def __init__(self, root, ip_address="localhost", csv_file="Test.csv"):
         self.root = root
@@ -579,11 +722,19 @@ class ShogunButtonUI:
         # 音声コマンドのポーリング開始
         self._check_voice_commands()
 
+        self.capture_host = ip_address
         self.post_worker = None
         self.capture_relay = None
+        self.pipeline_settings = load_pipeline_settings()
         self.pipeline_log_queue = queue.Queue()
+        self.pipeline_log_lines = []
+        self.pipeline_log_text = None
+        self.pipeline_log_file = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "logs",
+            f"pipeline_{time.strftime('%Y%m%d')}.log"
+        )
         self._check_pipeline_logs()
-        self._init_post_pipeline(ip_address)
+        self._init_post_pipeline()
         try:
             self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         except Exception as e:
@@ -794,6 +945,12 @@ class ShogunButtonUI:
 
             settings_btn = tk.Button(controls_frame, text="⚙", command=self.open_settings, **ctrl_btn_style)
             settings_btn.pack(side=tk.RIGHT, padx=3)
+
+            pipeline_btn = tk.Button(controls_frame, text="PP", command=self.open_pipeline_settings, **ctrl_btn_style)
+            pipeline_btn.pack(side=tk.RIGHT, padx=3)
+
+            pp_log_btn = tk.Button(controls_frame, text="PPログ", command=self.open_pipeline_log, **ctrl_btn_style)
+            pp_log_btn.pack(side=tk.RIGHT, padx=3)
 
             # マイクボタン（音声認識が利用可能な場合のみ表示）
             if self.voice_controller.is_available():
@@ -1105,8 +1262,12 @@ class ShogunButtonUI:
             self.update_status("キャプチャを停止しました", "success")
 
             if self.capture_relay:
+                self._pipeline_log("=== キャプチャ停止 → Post Process を開始します ===")
                 self.capture_relay.on_capture_stopped()
-                self.update_status("停止: Post Process パイプラインを起動しました（バックグラウンド）", "info")
+            elif self.pipeline_settings.get("enabled"):
+                self._pipeline_log("停止しましたが、ワーカーが起動していません（PPログ参照）")
+            else:
+                self._pipeline_log("停止しました（Post Process パイプラインは無効）")
         except Exception as e:
             self.show_progress_animation(False)
             self.update_status(f"エラー: {str(e)}", "error")
@@ -1124,29 +1285,159 @@ class ShogunButtonUI:
         try:
             while not self.pipeline_log_queue.empty():
                 msg = self.pipeline_log_queue.get_nowait()
-                print(f"[Pipeline] {msg}")
+                line = f"{time.strftime('%H:%M:%S')}  {msg}"
+                print(f"[Pipeline] {line}")
                 self.update_status(msg, "info")
+                self.pipeline_log_lines.append(line)
+                if len(self.pipeline_log_lines) > 500:
+                    self.pipeline_log_lines = self.pipeline_log_lines[-500:]
+                self._write_pipeline_logfile(line)
+                self._append_pipeline_log_window(line)
         except Exception as e:
             print(f"パイプラインログ処理エラー: {str(e)}")
         self.root.after(200, self._check_pipeline_logs)
 
-    def _init_post_pipeline(self, capture_host):
-        """Post Process パイプライン（常駐ワーカー＋リレー）を初期化する。"""
-        if not ENABLE_POST_PIPELINE:
+    def _write_pipeline_logfile(self, line):
+        """パイプラインのログを日付別ファイルへ追記する（コンソールが無くても残る）。"""
+        try:
+            os.makedirs(os.path.dirname(self.pipeline_log_file), exist_ok=True)
+            with open(self.pipeline_log_file, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except OSError:
+            pass
+
+    def _append_pipeline_log_window(self, line):
+        """ログウィンドウが開いていれば1行追記して自動スクロールする。"""
+        if self.pipeline_log_text is None:
             return
         try:
+            if not self.pipeline_log_text.winfo_exists():
+                self.pipeline_log_text = None
+                return
+            self.pipeline_log_text.configure(state="normal")
+            self.pipeline_log_text.insert("end", line + "\n")
+            self.pipeline_log_text.see("end")
+            self.pipeline_log_text.configure(state="disabled")
+        except Exception:
+            self.pipeline_log_text = None
+
+    def open_pipeline_log(self):
+        """Post Process ログを表示する別ウィンドウを開く。"""
+        try:
+            if self.pipeline_log_text is not None and self.pipeline_log_text.winfo_exists():
+                self.pipeline_log_text.winfo_toplevel().lift()
+                return
+            win = tk.Toplevel(self.root)
+            win.title("Post Process ログ")
+            win.geometry("760x420")
+            win.configure(bg=self.bg_color)
+
+            bar = tk.Frame(win, bg=self.bg_color)
+            bar.pack(fill=tk.X, padx=10, pady=(10, 0))
+            state = "有効" if self.pipeline_settings.get("enabled") else "無効"
+            ready = "起動中" if self.post_worker else "未起動"
+            tk.Label(bar, text=f"パイプライン: {state} / ワーカー: {ready}",
+                     font=(FONT, 11, "bold"), bg=self.bg_color, fg=self.accent_color).pack(side=tk.LEFT)
+            tk.Button(bar, text="クリア", font=(FONT, 10), command=self._clear_pipeline_log,
+                      bg=self.button_color, fg=self.text_color, relief="flat", padx=10).pack(side=tk.RIGHT)
+
+            text = tk.Text(win, bg=DARK_SURFACE if self.is_dark_mode else "#FFFFFF",
+                           fg=self.text_color, font=("Consolas", 10), wrap="word",
+                           insertbackground=self.text_color)
+            text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            sb = tk.Scrollbar(text, command=text.yview)
+            sb.pack(side=tk.RIGHT, fill=tk.Y)
+            text.configure(yscrollcommand=sb.set)
+            text.insert("end", "\n".join(self.pipeline_log_lines[-500:]) + ("\n" if self.pipeline_log_lines else ""))
+            text.see("end")
+            text.configure(state="disabled")
+            self.pipeline_log_text = text
+        except Exception as e:
+            print(f"ログウィンドウ表示エラー: {str(e)}")
+
+    def _clear_pipeline_log(self):
+        self.pipeline_log_lines = []
+        if self.pipeline_log_text is not None:
+            try:
+                self.pipeline_log_text.configure(state="normal")
+                self.pipeline_log_text.delete("1.0", "end")
+                self.pipeline_log_text.configure(state="disabled")
+            except Exception:
+                pass
+
+    def _init_post_pipeline(self):
+        """保存済み設定に従いパイプラインを起動する（有効時のみ）。"""
+        if self.pipeline_settings.get("enabled"):
+            self._start_pipeline()
+
+    def open_pipeline_settings(self):
+        """パイプライン設定ダイアログを開き、保存内容を即時適用する。"""
+        try:
+            dlg = PipelineSettingsDialog(self.root, self.is_dark_mode, self.pipeline_settings)
+            self.root.wait_window(dlg.dialog)
+            if not dlg.result:
+                return
+            self.pipeline_settings = dlg.result
+            save_pipeline_settings(self.pipeline_settings)
+            self._apply_pipeline()
+        except Exception as e:
+            print(f"パイプライン設定エラー: {str(e)}")
+            traceback.print_exc()
+            self.update_status(f"パイプライン設定エラー: {str(e)}", "error")
+
+    def _apply_pipeline(self):
+        """設定変更後、旧ワーカーの完全終了を待ってから起動し直す（UIを止めない）。"""
+        def run():
+            self._stop_pipeline(wait=True)
+            if self.pipeline_settings.get("enabled"):
+                self.root.after(0, self._start_pipeline)
+            else:
+                self._pipeline_log("Post Process パイプラインは無効です")
+        threading.Thread(target=run, daemon=True).start()
+
+    def _start_pipeline(self):
+        """現在の設定で常駐ワーカー＋リレーを起動する。"""
+        if self.post_worker is not None:
+            self._pipeline_log("既にワーカーが起動しているため二重起動を回避しました")
+            return
+        try:
+            s = self.pipeline_settings
+            path_map = []
+            if s.get("src_prefix") and s.get("unc_prefix"):
+                path_map = [(s["src_prefix"], s["unc_prefix"])]
             cfg = post_pipeline.PipelineConfig(
-                capture_host=capture_host, **POST_PIPELINE_CONFIG
+                capture_host=self.capture_host,
+                local_dest_root=s.get("local_dest_root", ""),
+                path_map=path_map,
+                level=s.get("level", "solve"),
+                out_format=s.get("out_format", "fbx"),
+            )
+            self._pipeline_log(
+                f"パイプライン起動: コピー先={s.get('local_dest_root','')} "
+                f"level={s.get('level')} 形式={s.get('out_format')} "
+                f"撮影PC={self.capture_host}"
             )
             self.post_worker = post_pipeline.PostProcessWorker(cfg, log=self._pipeline_log)
             self.capture_relay = post_pipeline.CaptureRelay(
                 self.ShogunCap, self.post_worker, cfg, log=self._pipeline_log
             )
-            self.update_status("Post Process パイプライン有効（ワーカー起動中）", "success")
+            self._pipeline_log("パイプライン有効。ShogunPostCL を起動中（数秒～十数秒）...")
         except Exception as e:
-            print(f"Post Process パイプライン初期化エラー: {str(e)}")
+            print(f"Post Process パイプライン起動エラー: {str(e)}")
             traceback.print_exc()
-            self.update_status(f"パイプライン初期化失敗: {str(e)}", "error")
+            self._pipeline_log(f"パイプライン起動失敗: {str(e)}")
+
+    def _stop_pipeline(self, wait=False):
+        """常駐ワーカーを停止する。wait=True で完全終了まで待つ。"""
+        w = self.post_worker
+        self.post_worker = None
+        self.capture_relay = None
+        if w:
+            self._pipeline_log("パイプラインを停止します...")
+            try:
+                w.shutdown(wait=wait)
+            except Exception as e:
+                print(f"ワーカー停止エラー: {str(e)}")
 
     def _on_close(self):
         """ウィンドウを閉じる際に常駐ワーカーを停止してから終了する。"""
@@ -1409,6 +1700,9 @@ class ShogunButtonUI:
 
                 # 接続とCSVロード
                 self.connect_to_shogun(new_ip)
+                self.capture_host = new_ip
+                if self.pipeline_settings.get("enabled"):
+                    self._apply_pipeline()
                 self.file = new_csv
                 self.load_capture_names()
 

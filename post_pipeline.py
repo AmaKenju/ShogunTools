@@ -45,7 +45,7 @@ class PipelineConfig:
         address="localhost",
         port=803,
         connect_timeout=90.0,
-        copy_extra_patterns=None,
+        copy_exts=None,
         log_dir=None,
     ):
         self.capture_host = capture_host
@@ -59,11 +59,7 @@ class PipelineConfig:
         self.address = address
         self.port = port
         self.connect_timeout = connect_timeout
-        self.copy_extra_patterns = (
-            copy_extra_patterns
-            if copy_extra_patterns is not None
-            else [".xcp", ".cp", ".mcp", ".cal", ".system", ".vsk", ".enf"]
-        )
+        self.copy_exts = copy_exts if copy_exts is not None else [".x2d", ".mcp"]
         self.log_dir = log_dir or os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "logs"
         )
@@ -93,7 +89,7 @@ def translate_to_unc(local_path, config):
 
 
 def copy_capture_files(file_paths, config, log=print):
-    """キャプチャが書き出したファイル群を PC-B のローカルへコピーする。
+    """今撮ったテイクの x2d と同名の指定拡張子（既定 .x2d/.mcp）だけをコピーする。
 
     Returns:
       (dest_folder, [ローカルにコピーされた x2d パス, ...])
@@ -106,37 +102,29 @@ def copy_capture_files(file_paths, config, log=print):
         log("コピー: x2d が見つかりません: %s" % file_paths)
         return None, []
 
-    take_name = os.path.splitext(os.path.basename(x2d_sources[0]))[0]
-    dest_folder = os.path.join(config.local_dest_root, take_name)
-    os.makedirs(dest_folder, exist_ok=True)
-
-    to_copy = list(file_paths)
-
-    if config.copy_extra_patterns:
-        src_dir_local = os.path.dirname(x2d_sources[0])
-        src_dir_unc = translate_to_unc(src_dir_local, config)
-        try:
-            for name in os.listdir(src_dir_unc):
-                ext = os.path.splitext(name)[1].lower()
-                if ext in config.copy_extra_patterns:
-                    full_local = os.path.join(src_dir_local, name)
-                    if full_local not in to_copy:
-                        to_copy.append(full_local)
-        except OSError as e:
-            log(f"コピー: 追加校正ファイルの列挙に失敗（無視）: {e}")
-
     copied_x2d = []
-    for src_local in to_copy:
-        src = translate_to_unc(src_local, config)
-        dst = os.path.join(dest_folder, os.path.basename(src_local))
-        try:
-            shutil.copy2(src, dst)
-            if dst.lower().endswith(".x2d"):
-                copied_x2d.append(dst)
-        except OSError as e:
-            log(f"コピー失敗: {src} -> {dst}: {e}")
+    dest_folder = None
+    for x2d_local in x2d_sources:
+        base_local = os.path.splitext(x2d_local)[0]
+        take_name = os.path.basename(base_local)
+        dest_folder = os.path.join(config.local_dest_root, take_name)
+        os.makedirs(dest_folder, exist_ok=True)
 
-    log(f"コピー完了: {len(copied_x2d)} 個の x2d を {dest_folder} へ")
+        for ext in config.copy_exts:
+            src = translate_to_unc(base_local + ext, config)
+            if not os.path.exists(src):
+                if ext.lower() == ".x2d":
+                    log(f"コピー: x2d が見つかりません: {src}")
+                continue
+            dst = os.path.join(dest_folder, take_name + ext)
+            try:
+                shutil.copy2(src, dst)
+                if ext.lower() == ".x2d":
+                    copied_x2d.append(dst)
+            except OSError as e:
+                log(f"コピー失敗: {src} -> {dst}: {e}")
+
+    log(f"コピー完了: テイク {len(copied_x2d)} 件（{'/'.join(config.copy_exts)}）を {dest_folder} へ")
     return dest_folder, copied_x2d
 
 
@@ -172,10 +160,10 @@ class PostProcessWorker:
 
     def shutdown(self, wait=True):
         """ワーカーを停止し、ShogunPostCL を終了する。"""
-        self._queue.put(self._SENTINEL)
         self._stop.set()
+        self._queue.put(self._SENTINEL)
         if wait:
-            self._thread.join(timeout=30)
+            self._thread.join(timeout=40)
 
     def _connect(self):
         ViconShogunPost, Offline = spb.import_sdk()
@@ -185,20 +173,34 @@ class PostProcessWorker:
         log_path = os.path.join(self.config.log_dir, f"post_worker_{stamp}.log")
         self.log(f"ワーカー: ShogunPostCL を起動 ({cl_path})")
         self._proc, self._log_fh, self._reader = spb.launch_cl(cl_path, log_path)
-        self._v, took = spb.connect_with_retry(
-            ViconShogunPost, self.config.address, self.config.port,
-            self.config.connect_timeout,
+
+        t0 = time.time()
+        last_err = None
+        while time.time() - t0 < self.config.connect_timeout:
+            if self._stop.is_set():
+                raise RuntimeError("停止要求により接続を中断しました")
+            try:
+                self._v = ViconShogunPost.ViconShogunPost(self.config.address, self.config.port)
+                self._Offline = Offline
+                self.log(f"ワーカー: 接続しました（{time.time()-t0:.1f}s）。投入待機中")
+                self._ready.set()
+                return
+            except Exception as e:
+                last_err = e
+                for _ in range(4):
+                    if self._stop.is_set():
+                        raise RuntimeError("停止要求により接続を中断しました")
+                    time.sleep(0.5)
+        raise TimeoutError(
+            f"ShogunPostCL へ {self.config.connect_timeout:.0f} 秒以内に接続できませんでした: {last_err}"
         )
-        self._Offline = Offline
-        self.log(f"ワーカー: 接続しました（{took:.1f}s）。投入待機中")
-        self._ready.set()
 
     def _run(self):
         try:
             self._connect()
         except Exception as e:
             self.log(f"ワーカー起動失敗: {e}")
-            traceback.print_exc()
+            self._cleanup_proc()
             return
 
         while True:
@@ -218,14 +220,22 @@ class PostProcessWorker:
             except Exception as e:
                 self.log(f"ワーカー: 失敗 {name}: {e}（{time.time()-t0:.1f}s）")
 
+        self._cleanup_proc()
+        self.log("ワーカー: 停止しました")
+
+    def _cleanup_proc(self):
+        """ShogunPostCL を終了し、ログを閉じる（プロセスを残さない）。"""
         try:
-            spb.shutdown_cl(self._proc)
+            if self._proc:
+                spb.shutdown_cl(self._proc)
         finally:
             if self._reader:
                 self._reader.join(timeout=3)
             if self._log_fh:
-                self._log_fh.close()
-        self.log("ワーカー: 停止しました")
+                try:
+                    self._log_fh.close()
+                except Exception:
+                    pass
 
 
 class CaptureRelay:

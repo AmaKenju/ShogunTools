@@ -1,0 +1,18 @@
+Traceback (most recent call last):
+  File "C:\Users\Owner\Documents\GitHub\ShogunTools\post_pipeline.py", line 186, in _run
+    self._connect()
+  File "C:\Users\Owner\Documents\GitHub\ShogunTools\post_pipeline.py", line 176, in _connect
+    self._v, took = spb.connect_with_retry(
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Owner\Documents\GitHub\ShogunTools\ShogunPostBatch.py", line 173, in connect_with_retry
+    raise TimeoutError(f"ShogunPostCL Ç÷ {timeout:.0f} ïbà»ì‡Ç…ê⁄ë±Ç≈Ç´Ç‹ÇπÇÒÇ≈ÇµÇΩ: {last_err}")
+TimeoutError: ShogunPostCL Ç÷ 90 ïbà»ì‡Ç…ê⁄ë±Ç≈Ç´Ç‹ÇπÇÒÇ≈ÇµÇΩ: Error: Invalid command name or command not valid for the host application.
+Traceback (most recent call last):
+  File "C:\Users\Owner\Documents\GitHub\ShogunTools\post_pipeline.py", line 186, in _run
+    self._connect()
+  File "C:\Users\Owner\Documents\GitHub\ShogunTools\post_pipeline.py", line 176, in _connect
+    self._v, took = spb.connect_with_retry(
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Owner\Documents\GitHub\ShogunTools\ShogunPostBatch.py", line 173, in connect_with_retry
+    raise TimeoutError(f"ShogunPostCL Ç÷ {timeout:.0f} ïbà»ì‡Ç…ê⁄ë±Ç≈Ç´Ç‹ÇπÇÒÇ≈ÇµÇΩ: {last_err}")
+TimeoutError: ShogunPostCL Ç÷ 90 ïbà»ì‡Ç…ê⁄ë±Ç≈Ç´Ç‹ÇπÇÒÇ≈ÇµÇΩ: Error: Invalid command name or command not valid for the host application.

@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "local_dest_root": "C:/Database/PPTest/Capture day 1/Session 1",
+  "src_prefix": "C:\\Database\\Test\\Capture day 1\\Session 1",
+  "unc_prefix": "",
+  "level": "solve",
+  "out_format": "fbx"
+}
