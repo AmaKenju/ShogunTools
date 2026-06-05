@@ -18,14 +18,14 @@ ShogunPostBatch.py
      （起動完了まで接続をリトライ）。
   3. 各 X2D について以下を実行:
        NewScene → ImportFile(x2d) →〔任意で VSK Import〕→
-       Offline.Reconstruct →〔AutoLabel〕→〔Solve〕→ SaveFile(.hdf)
+       Offline.QuickPost(level) → ExportFile(.fbx 等)
   4. 切断して ShogunPostCL を終了する。
 
 前提・注意:
   - ViconShogunPostSDK が pip 導入済みであること
     （`import ViconShogunPost` が通ること）。Shogun Post 付属の
     SDK\\Win64\\install_vicon_shogun_post_sdk.bat で導入できる。
-  - AutoLabel / Solve はシーンにサブジェクトが必要。X2D/HDF に
+  - QuickPost(Label/Solve) はシーンにサブジェクトが必要。X2D に
     サブジェクトが含まれない場合は --subjects で VSK を指定するか、
     --level reconstruct で再構成のみ実行する。
   - SDK 制御ポート（既定 803）を使うため、同一マシンで対話用の
@@ -36,7 +36,7 @@ ShogunPostBatch.py
   python ShogunPostBatch.py "D:/Capture/Day1/Session1"
   python ShogunPostBatch.py "D:/Capture" --recursive
   python ShogunPostBatch.py "D:/Capture" --level reconstruct
-  python ShogunPostBatch.py "D:/Capture" --subjects "D:/Subjects/actor.vsk"
+  python ShogunPostBatch.py "D:/Capture" --format c3d
 """
 
 import argparse
@@ -47,7 +47,6 @@ import sys
 import threading
 import time
 
-# Windows の cp932 コンソールでも日本語を文字化けさせないよう UTF-8 出力にする
 try:
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
@@ -57,9 +56,6 @@ except (AttributeError, ValueError):
 VICON_DIR = r"C:\Program Files\Vicon"
 
 
-# ---------------------------------------------------------------------------
-# SDK のインポート
-# ---------------------------------------------------------------------------
 def import_sdk():
     """ViconShogunPost SDK を読み込んで (ViconShogunPost, Offline) を返す。"""
     try:
@@ -83,9 +79,6 @@ def sdk_version():
         return None
 
 
-# ---------------------------------------------------------------------------
-# ShogunPostCL.exe の検出（SDK バージョンに合わせる）
-# ---------------------------------------------------------------------------
 def _enumerate_cl():
     """インストール済み ShogunPostCL を {(maj,min): exe_path} で返す。"""
     found = {}
@@ -114,7 +107,6 @@ def find_shogunpost_cl(explicit_path=None):
             "ShogunPostCL.exe が見つかりません。--cl-path で明示指定してください。"
         )
 
-    # SDK バージョンに一致する CL を優先
     ver = sdk_version()
     if ver:
         parts = ver.split(".")
@@ -131,9 +123,6 @@ def find_shogunpost_cl(explicit_path=None):
     return candidates[latest]
 
 
-# ---------------------------------------------------------------------------
-# X2D ファイルの列挙
-# ---------------------------------------------------------------------------
 def discover_x2d_files(directory, recursive=False):
     """directory 内の *.x2d を列挙して絶対パスのリストで返す。"""
     if not os.path.isdir(directory):
@@ -148,9 +137,6 @@ def discover_x2d_files(directory, recursive=False):
     return sorted(set(os.path.abspath(f) for f in files))
 
 
-# ---------------------------------------------------------------------------
-# ShogunPostCL の起動 / 接続 / 終了
-# ---------------------------------------------------------------------------
 def _drain_pipe(pipe, log_fh):
     """ShogunPostCL の出力をログファイルへ書き出すスレッド本体。"""
     for raw in iter(pipe.readline, ""):
@@ -181,7 +167,7 @@ def connect_with_retry(ViconShogunPost, address, port, timeout=90.0):
         try:
             v = ViconShogunPost.ViconShogunPost(address, port)
             return v, time.time() - t0
-        except Exception as e:  # 起動途中は接続失敗するのでリトライ
+        except Exception as e:
             last_err = e
             time.sleep(2)
     raise TimeoutError(f"ShogunPostCL へ {timeout:.0f} 秒以内に接続できませんでした: {last_err}")
@@ -202,17 +188,8 @@ def shutdown_cl(proc):
         proc.kill()
 
 
-# ---------------------------------------------------------------------------
-# 1 ファイルの処理
-# ---------------------------------------------------------------------------
-# QuickPost の処理レベルへのマッピング（--level → procLevel）
 _PROC_LEVEL = {"reconstruct": "Reconstruct", "label": "Label", "solve": "Solve"}
 
-# ヘッドレスで保存できない形式（実機検証で判明）:
-#   - hdf  : SaveFile が ShogunPostCL をクラッシュさせる / hdf エクスポータも無い
-#   - vdf  : エクスポータ未搭載（File exporter for type "vdf" not found）
-#   - bvh  : このデータでは Failed to export
-# 動作確認済み: fbx（ソルブ済み骨格アニメ）, c3d, trc
 _UNSUPPORTED_FORMATS = {"hdf", "vdf"}
 
 
@@ -236,26 +213,22 @@ def process_one(v, Offline, x2d_path, subjects, level, out_format):
     v.ImportFile(x2d_path, "selCreateNew")
     steps.append("import")
 
-    # 任意: ラベル/ソルブ用の VSK を読み込む（データにサブジェクトが無い場合）
     for vsk in subjects:
         v.ImportFile(vsk, "selCreateNew")
     if subjects:
         steps.append("subjects")
 
-    # Post Process（Reconstruct/Label/Solve を QuickPost で安定実行）
     proc_level = _PROC_LEVEL[level]
     off = Offline()
     off.QuickPost(proc_level, Offline.PLAY_RANGE)
     steps.append("quickpost:" + proc_level)
 
-    # エクスポート（既存ファイルを消してから）
     if os.path.exists(out_path):
         try:
             os.remove(out_path)
         except OSError:
             pass
     v.ExportFile(out_path, out_format)
-    # ExportFile はエクスポータ不在/失敗でも例外を出さないため、生成を検証する
     if not (os.path.exists(out_path) and os.path.getsize(out_path) > 0):
         raise RuntimeError(
             f"エクスポート失敗（{out_format} 非対応 or エクスポータ未搭載の可能性）: {out_path}"
@@ -265,9 +238,6 @@ def process_one(v, Offline, x2d_path, subjects, level, out_format):
     return True, f"{os.path.basename(out_path)} ({'+'.join(steps)})"
 
 
-# ---------------------------------------------------------------------------
-# バッチ本体
-# ---------------------------------------------------------------------------
 def run_batch(x2d_files, subjects, level, out_format, cl_path, address, port,
               connect_timeout, log_path):
     ViconShogunPost, Offline = import_sdk()
@@ -309,7 +279,6 @@ def run_batch(x2d_files, subjects, level, out_format, cl_path, address, port,
                 print(f"    NG  {name}: {e}  ({dt:.1f}s)", flush=True)
                 results.append((x2d, False, str(e)))
 
-        # 切断
         try:
             v.Disconnect() if hasattr(v, "Disconnect") else None
         except Exception:
@@ -324,9 +293,6 @@ def run_batch(x2d_files, subjects, level, out_format, cl_path, address, port,
     return results
 
 
-# ---------------------------------------------------------------------------
-# メイン
-# ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(
         description="X2D を ShogunPostCL でバッチ再計算（QuickPost）して fbx 等にエクスポートする。"
@@ -358,7 +324,6 @@ def main():
         directory = input("X2D フォルダのパスを入力してください: ").strip().strip('"')
     directory = os.path.abspath(directory)
 
-    # サブジェクト VSK の解決
     subjects = []
     for s in args.subjects:
         if os.path.isdir(s):
@@ -369,7 +334,6 @@ def main():
             print(f"警告: サブジェクトが見つかりません（無視します）: {s}")
     subjects = [os.path.abspath(s) for s in subjects]
 
-    # X2D 列挙
     try:
         x2d_files = discover_x2d_files(directory, recursive=args.recursive)
     except (NotADirectoryError, FileNotFoundError) as e:
@@ -398,14 +362,12 @@ def main():
         print("--dry-run: 実行はしていません。")
         return 0
 
-    # CL 検出
     try:
         cl_path = find_shogunpost_cl(args.cl_path)
     except FileNotFoundError as e:
         print(f"エラー: {e}")
         return 1
 
-    # ログ
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
     os.makedirs(log_dir, exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -417,7 +379,6 @@ def main():
                         args.address, args.port, args.connect_timeout, log_path)
     elapsed = time.time() - start
 
-    # 集計
     print("-" * 64)
     ok = sum(1 for _, s, _ in results if s)
     ng = len(results) - ok

@@ -13,24 +13,14 @@ import json
 
 import post_pipeline
 
-# ===== Post Process パイプライン設定（環境に合わせて編集してください）=====
-# True にすると、キャプチャ停止時に「完了待ち→PC-Aからローカルへコピー→
-# 常駐ShogunPostCLでPost Process」を自動実行します（撮影は継続可能）。
 ENABLE_POST_PIPELINE = False
 POST_PIPELINE_CONFIG = dict(
-    # PC-B（このアプリのPC）側のコピー先ルート
     local_dest_root=r"E:\Incoming",
-    # 撮影マシン(PC-A)のローカルパス -> 共有(UNC) への変換規則（前方一致）。
-    # 例: D:\ShogunData に保存され \\CAP-PC\ShogunData で共有されている場合:
-    #   path_map=[(r"D:\ShogunData", r"\\CAP-PC\ShogunData")]
-    # 規則に当たらない場合は管理共有 (\\<host>\D$\...) を自動で試します。
     path_map=[],
-    level="solve",        # reconstruct / label / solve
-    out_format="fbx",     # fbx / c3d / trc（hdf/vdf はヘッドレス非対応）
-    subjects=[],          # ラベル/ソルブに使う VSK（任意）
+    level="solve",
+    out_format="fbx",
+    subjects=[],
 )
-# ※ capture_host（PC-A）は Shogun 接続時の IP アドレスを自動利用します。
-# =======================================================================
 
 # Vosk音声認識（オプション）
 USE_VOSK = False
@@ -589,7 +579,6 @@ class ShogunButtonUI:
         # 音声コマンドのポーリング開始
         self._check_voice_commands()
 
-        # Post Process パイプライン（停止時に自動コピー＋Post Process）
         self.post_worker = None
         self.capture_relay = None
         self.pipeline_log_queue = queue.Queue()
@@ -1115,7 +1104,6 @@ class ShogunButtonUI:
 
             self.update_status("キャプチャを停止しました", "success")
 
-            # Post Process パイプライン: 完了待ち→コピー→Post Process をバックグラウンド起動
             if self.capture_relay:
                 self.capture_relay.on_capture_stopped()
                 self.update_status("停止: Post Process パイプラインを起動しました（バックグラウンド）", "info")
@@ -1124,9 +1112,6 @@ class ShogunButtonUI:
             self.update_status(f"エラー: {str(e)}", "error")
             messagebox.showerror("エラー", f"キャプチャ停止エラー: {str(e)}")
 
-    # ------------------------------------------------------------------
-    # Post Process パイプライン
-    # ------------------------------------------------------------------
     def _pipeline_log(self, message):
         """ワーカー/リレー（別スレッド）からのログをUIスレッドへ安全に渡す。"""
         try:

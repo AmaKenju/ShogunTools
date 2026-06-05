@@ -5,8 +5,8 @@ post_pipeline.py
 
 役割:
   - PostProcessWorker : ShogunPostCL を 1 つ常駐させ、キューに入ってきた
-                        X2D を順次 Post Process（Reconstruct→AutoLabel→Solve）
-                        して保存する常駐ワーカー（バックグラウンドスレッド）。
+                        X2D を順次 Post Process（QuickPost）して
+                        エクスポートする常駐ワーカー（バックグラウンドスレッド）。
   - CaptureRelay      : Shogun Live のキャプチャ停止→完了を待ち、書き出された
                         ファイルを共有(UNC)経由で PC-B のローカルへコピーし、
                         その X2D をワーカーのキューへ投入する。
@@ -31,24 +31,21 @@ import traceback
 import ShogunPostBatch as spb
 
 
-# ---------------------------------------------------------------------------
-# 設定
-# ---------------------------------------------------------------------------
 class PipelineConfig:
     def __init__(
         self,
-        capture_host,                 # PC-A のホスト名 or IP（UNC 変換のフォールバックに使用）
-        local_dest_root,              # PC-B 側のコピー先ルートフォルダ
-        path_map=None,                # [(local_prefix, unc_prefix), ...] 変換規則（前方一致）
-        use_admin_share_fallback=True,  # 規則に当たらない時 D:\x -> \\host\D$\x を試す
-        level="solve",                # reconstruct / label / solve（QuickPost の procLevel）
-        out_format="fbx",             # fbx / c3d / trc（hdf/vdf はヘッドレス非対応）
-        subjects=None,                # 読み込む VSK（任意）
-        cl_path=None,                 # ShogunPostCL.exe（省略時自動）
-        address="localhost",          # ShogunPostCL の SDK 接続先
-        port=803,                     # SDK 制御ポート
+        capture_host,
+        local_dest_root,
+        path_map=None,
+        use_admin_share_fallback=True,
+        level="solve",
+        out_format="fbx",
+        subjects=None,
+        cl_path=None,
+        address="localhost",
+        port=803,
         connect_timeout=90.0,
-        copy_extra_patterns=None,     # x2d と同じフォルダから追加コピーする拡張子
+        copy_extra_patterns=None,
         log_dir=None,
     ):
         self.capture_host = capture_host
@@ -62,8 +59,6 @@ class PipelineConfig:
         self.address = address
         self.port = port
         self.connect_timeout = connect_timeout
-        # 再構成にはキャリブレーション等が必要なため、テイクと同じフォルダにある
-        # 校正・システム系ファイルも併せてコピーしておく
         self.copy_extra_patterns = (
             copy_extra_patterns
             if copy_extra_patterns is not None
@@ -74,39 +69,29 @@ class PipelineConfig:
         )
 
 
-
-# ---------------------------------------------------------------------------
-# パス変換（PC-A ローカル -> UNC）
-# ---------------------------------------------------------------------------
 def translate_to_unc(local_path, config):
     """撮影マシンのローカルパスを PC-B からアクセスできる UNC パスへ変換する。"""
     if not local_path:
         return local_path
     p = local_path.replace("/", "\\")
 
-    # 既に UNC ならそのまま
     if p.startswith("\\\\"):
         return p
 
-    # 明示マッピング（前方一致・大文字小文字無視）
     for local_prefix, unc_prefix in config.path_map:
         lp = local_prefix.replace("/", "\\")
         if p.lower().startswith(lp.lower()):
             rest = p[len(lp):].lstrip("\\")
             return unc_prefix.rstrip("\\") + "\\" + rest
 
-    # ドライブレター -> 管理共有 (\\host\D$\...)
     if config.use_admin_share_fallback and len(p) >= 2 and p[1] == ":":
         drive = p[0]
         rest = p[2:].lstrip("\\")
         return f"\\\\{config.capture_host}\\{drive}$\\{rest}"
 
-    return p  # 変換できない場合はそのまま（コピー時に失敗→ログ）
+    return p
 
 
-# ---------------------------------------------------------------------------
-# キャプチャファイルのコピー
-# ---------------------------------------------------------------------------
 def copy_capture_files(file_paths, config, log=print):
     """キャプチャが書き出したファイル群を PC-B のローカルへコピーする。
 
@@ -121,15 +106,12 @@ def copy_capture_files(file_paths, config, log=print):
         log("コピー: x2d が見つかりません: %s" % file_paths)
         return None, []
 
-    # テイク名 = 最初の x2d のベース名（拡張子無し）
     take_name = os.path.splitext(os.path.basename(x2d_sources[0]))[0]
     dest_folder = os.path.join(config.local_dest_root, take_name)
     os.makedirs(dest_folder, exist_ok=True)
 
-    # 1) キャプチャが報告した全ファイルをコピー
     to_copy = list(file_paths)
 
-    # 2) x2d と同じフォルダにある校正/システム系ファイルも追加（API が返さない場合の保険）
     if config.copy_extra_patterns:
         src_dir_local = os.path.dirname(x2d_sources[0])
         src_dir_unc = translate_to_unc(src_dir_local, config)
@@ -158,9 +140,6 @@ def copy_capture_files(file_paths, config, log=print):
     return dest_folder, copied_x2d
 
 
-# ---------------------------------------------------------------------------
-# 常駐 Post Process ワーカー
-# ---------------------------------------------------------------------------
 class PostProcessWorker:
     """ShogunPostCL を 1 つ常駐させ、キューの x2d を順次処理する。"""
 
@@ -180,7 +159,6 @@ class PostProcessWorker:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
-    # --- public ---
     def enqueue(self, x2d_path):
         """処理対象の x2d をキューへ追加する（複数可・スレッドセーフ）。"""
         if isinstance(x2d_path, (list, tuple)):
@@ -199,7 +177,6 @@ class PostProcessWorker:
         if wait:
             self._thread.join(timeout=30)
 
-    # --- internal ---
     def _connect(self):
         ViconShogunPost, Offline = spb.import_sdk()
         cl_path = spb.find_shogunpost_cl(self.config.cl_path)
@@ -241,7 +218,6 @@ class PostProcessWorker:
             except Exception as e:
                 self.log(f"ワーカー: 失敗 {name}: {e}（{time.time()-t0:.1f}s）")
 
-        # 後始末
         try:
             spb.shutdown_cl(self._proc)
         finally:
@@ -252,18 +228,14 @@ class PostProcessWorker:
         self.log("ワーカー: 停止しました")
 
 
-# ---------------------------------------------------------------------------
-# キャプチャ完了 → コピー → 投入
-# ---------------------------------------------------------------------------
 class CaptureRelay:
     """Shogun Live のキャプチャ停止を受け、完了待ち→コピー→ワーカー投入を行う。"""
 
     def __init__(self, shogun_capture, worker, config, log=print):
-        self.cap = shogun_capture       # CaptureServices インスタンス
-        self.worker = worker            # PostProcessWorker
+        self.cap = shogun_capture
+        self.worker = worker
         self.config = config
         self.log = log
-        # CaptureServices.EState を取得
         self._EState = type(shogun_capture).EState
 
     def on_capture_stopped(self, capture_id=None):
@@ -277,7 +249,7 @@ class CaptureRelay:
     def _get_state(self):
         """(id, state) を返す。取得失敗時は (None, None)。"""
         try:
-            res = self.cap.latest_capture_state()  # (Result, id, state)
+            res = self.cap.latest_capture_state()
             return res[1], res[2]
         except Exception as e:
             self.log(f"リレー: 状態取得失敗: {e}")
@@ -293,7 +265,6 @@ class CaptureRelay:
             if state is None:
                 time.sleep(poll)
                 continue
-            # 値・enum どちらでも比較できるように
             sval = getattr(state, "value", state)
             if sval == getattr(completed, "value", completed):
                 return True
@@ -309,8 +280,7 @@ class CaptureRelay:
             self.log("リレー: キャプチャ完了を待っています...")
             if not self._wait_for_complete(capture_id):
                 return
-            # 書き出されたファイルパスを取得
-            res = self.cap.latest_capture_file_paths()  # (Result, id, [paths])
+            res = self.cap.latest_capture_file_paths()
             file_paths = list(res[2]) if res and len(res) >= 3 else []
             if not file_paths:
                 self.log("リレー: 書き出しファイルが取得できませんでした")
