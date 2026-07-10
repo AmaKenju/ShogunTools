@@ -41,9 +41,12 @@ ShogunPostBatch.py
 
 import argparse
 import glob
+import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -149,6 +152,10 @@ class BatchProgress:
     FILL = "█"   # █
     EMPTY = "░"  # ░
 
+    # ShogunPostCL の stdout が 1 ファイルごとに出す粗いフェーズ進捗。
+    # 例: "Default:Flow2GraphProcessor -> Processing Pass 2 of 3..."
+    _PASS_RE = re.compile(r"Processing Pass (\d+) of (\d+)")
+
     def __init__(self, total, enabled=None, width=28):
         self.total = max(total, 0)
         self.width = width
@@ -160,23 +167,61 @@ class BatchProgress:
         self._start = 0.0
         self._lock = threading.Lock()
         self._last_len = 0
+        self._phase = 0          # 現在ファイルのフェーズ（0=未取得）
+        self._phase_total = 0    # 総フェーズ数（Pass X of N の N）
+        self._durations = []     # 完了ファイルの所要秒（ETA 用）
 
     @staticmethod
-    def _short(name, maxlen=32):
+    def _short(name, maxlen=28):
         return name if len(name) <= maxlen else name[: maxlen - 1] + "…"
+
+    @staticmethod
+    def _fmt_eta(sec):
+        m, s = divmod(int(sec + 0.5), 60)
+        return f"{m}:{s:02d}"
 
     def _bar(self, frac):
         filled = int(round(frac * self.width))
         filled = max(0, min(self.width, filled))
         return self.FILL * filled + self.EMPTY * (self.width - filled)
 
+    def on_log_line(self, raw):
+        """ドレインスレッドから 1 行ずつ渡される。フェーズ進捗を拾う。"""
+        m = self._PASS_RE.search(raw)
+        if not m:
+            return
+        phase, phase_total = int(m.group(1)), int(m.group(2))
+        with self._lock:
+            self._phase = phase
+            self._phase_total = phase_total
+        # 非 TTY では上書き表示できないので、フェーズ遷移を 1 行だけ出す。
+        if not self.enabled:
+            print(f"        … Pass {phase}/{phase_total}", flush=True)
+
+    def _subfrac(self):
+        """現在ファイル内の進み具合（0.0〜1.0）。フェーズ未取得なら 0。"""
+        if self._phase_total > 0:
+            return min(self._phase / self._phase_total, 1.0)
+        return 0.0
+
+    def _eta_text(self):
+        if not self._durations:
+            return ""
+        avg = sum(self._durations) / len(self._durations)
+        remaining = self.total - self.completed  # 現在ファイルを含む残り件数
+        est = avg * remaining - (time.time() - self._start)
+        est = max(est, 0.0)
+        return f"  残り~{self._fmt_eta(est)}"
+
     def _render(self):
-        frac = self.completed / self.total if self.total else 1.0
+        sub = self._subfrac()
+        frac = (self.completed + sub) / self.total if self.total else 1.0
         pct = int(frac * 100)
         spin = self.SPIN[int(time.time() * 8) % len(self.SPIN)]
         elapsed = time.time() - self._start
+        phase = f"Pass {self._phase}/{self._phase_total} " if self._phase_total else ""
         line = (f"\r[{self._bar(frac)}] {pct:3d}%  ({self.completed}/{self.total})  "
-                f"{spin} {self._short(self._current)}  {elapsed:5.1f}s")
+                f"{spin} {self._short(self._current)}  {phase}{elapsed:5.1f}s{self._eta_text()}")
         pad = max(0, self._last_len - len(line))
         sys.stdout.write(line + " " * pad)
         sys.stdout.flush()
@@ -194,8 +239,11 @@ class BatchProgress:
                 self._render()
 
     def start_file(self, name):
-        self._current = name
-        self._start = time.time()
+        with self._lock:
+            self._current = name
+            self._start = time.time()
+            self._phase = 0
+            self._phase_total = 0
         if self.enabled:
             self._stop.clear()
             with self._lock:
@@ -205,12 +253,14 @@ class BatchProgress:
         else:
             print(f"[{self.completed + 1}/{self.total}] {name} を処理中...", flush=True)
 
-    def finish_file(self, line):
+    def finish_file(self, line, dt=None):
         if self.enabled and self._thread:
             self._stop.set()
             self._thread.join()
             self._thread = None
         self.completed += 1
+        if dt is not None:
+            self._durations.append(dt)
         self._clear_line()
         print(line, flush=True)
 
@@ -231,16 +281,29 @@ class BatchProgress:
                   flush=True)
 
 
-def _drain_pipe(pipe, log_fh):
-    """ShogunPostCL の出力をログファイルへ書き出すスレッド本体。"""
+def _drain_pipe(pipe, log_fh, on_line=None):
+    """ShogunPostCL の出力をログファイルへ書き出すスレッド本体。
+
+    on_line が渡された場合、各行をそのコールバックにも渡してフェーズ進捗を
+    抽出させる（パース失敗がドレインを止めないよう例外は握りつぶす）。
+    """
     for raw in iter(pipe.readline, ""):
         log_fh.write(raw)
         log_fh.flush()
+        if on_line is not None:
+            try:
+                on_line(raw)
+            except Exception:
+                pass
     pipe.close()
 
 
-def launch_cl(cl_path, log_path):
-    """ShogunPostCL をヘッドレス起動し、(proc, log_fh, reader_thread) を返す。"""
+def launch_cl(cl_path, log_path, on_line=None):
+    """ShogunPostCL をヘッドレス起動し、(proc, log_fh, reader_thread) を返す。
+
+    on_line を渡すと、ShogunPostCL の各出力行がそのコールバックにも渡される
+    （プログレス表示がフェーズ進捗を拾うのに使う）。
+    """
     workdir = os.path.dirname(cl_path)
     proc = subprocess.Popen(
         [cl_path], cwd=workdir,
@@ -248,7 +311,7 @@ def launch_cl(cl_path, log_path):
         text=True, encoding="utf-8", errors="ignore",
     )
     log_fh = open(log_path, "w", encoding="utf-8")
-    reader = threading.Thread(target=_drain_pipe, args=(proc.stdout, log_fh), daemon=True)
+    reader = threading.Thread(target=_drain_pipe, args=(proc.stdout, log_fh, on_line), daemon=True)
     reader.start()
     return proc, log_fh, reader
 
@@ -332,10 +395,80 @@ def process_one(v, Offline, x2d_path, subjects, level, out_format):
     return True, f"{os.path.basename(out_path)} ({'+'.join(steps)})"
 
 
+# ─── ワーカープロセス ──────────────────────────────────────────────
+# QuickPost（SDK の C 関数）は実行中ずっと Python の GIL を保持するため、
+# 同一プロセス内ではプログレス描画スレッドが動けない。そこで SDK 処理は
+# この別プロセス（ワーカー）で実行し、親プロセスは ShogunPostCL の stdout と
+# 下記のイベント行だけを読んでバーを描画する（親は SDK を呼ばないので GIL が
+# 常に空き、スピナー/バーが滑らかに動く）。
+_EVENT_PREFIX = "@@SPB@@"
+
+
+def _emit(evt):
+    """ワーカー→親へ 1 イベントを JSON 行で送る。"""
+    sys.stdout.write(_EVENT_PREFIX + json.dumps(evt, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+
+def worker_main(cfg_path):
+    """別プロセスとして SDK に接続し、各 X2D を処理してイベントを emit する。"""
+    with open(cfg_path, encoding="utf-8") as fh:
+        cfg = json.load(fh)
+    files = cfg["files"]
+    subjects = cfg["subjects"]
+    level = cfg["level"]
+    out_format = cfg["out_format"]
+    address = cfg["address"]
+    port = cfg["port"]
+    connect_timeout = cfg["connect_timeout"]
+
+    try:
+        ViconShogunPost, Offline = import_sdk()
+    except SystemExit:
+        # import_sdk は詳細な導入手順を stdout に出す（親がログへ退避）。
+        _emit({"e": "fatal", "err": "ViconShogunPostSDK を読み込めません（ログ参照）"})
+        return 1
+
+    try:
+        v, took = connect_with_retry(ViconShogunPost, address, port, connect_timeout)
+    except TimeoutError as e:
+        _emit({"e": "connect_failed", "err": str(e)})
+        return 1
+    _emit({"e": "connected", "took": took})
+
+    for i, x2d in enumerate(files, 1):
+        _emit({"e": "start", "i": i, "name": os.path.basename(x2d)})
+        t0 = time.time()
+        try:
+            ok, msg = process_one(v, Offline, x2d, subjects, level, out_format)
+            _emit({"e": "ok", "path": x2d, "msg": msg, "dt": time.time() - t0})
+        except Exception as e:
+            _emit({"e": "ng", "path": x2d, "name": os.path.basename(x2d),
+                   "err": str(e), "dt": time.time() - t0})
+
+    try:
+        v.Disconnect() if hasattr(v, "Disconnect") else None
+    except Exception:
+        pass
+    _emit({"e": "done"})
+    return 0
+
+
+def _spawn_worker(cfg):
+    """SDK 処理ワーカーを別プロセスとして起動し、Popen を返す。"""
+    cfg_fd, cfg_path = tempfile.mkstemp(suffix=".json", prefix="spb_cfg_")
+    with os.fdopen(cfg_fd, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh, ensure_ascii=False)
+    worker = subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__), "--_worker", cfg_path],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="ignore",
+    )
+    return worker, cfg_path
+
+
 def run_batch(x2d_files, subjects, level, out_format, cl_path, address, port,
               connect_timeout, log_path, show_progress=None):
-    ViconShogunPost, Offline = import_sdk()
-
     print(f"ShogunPostCL : {cl_path}")
     print(f"SDK バージョン: {sdk_version()}")
     print(f"接続先        : {address}:{port}")
@@ -344,50 +477,76 @@ def run_batch(x2d_files, subjects, level, out_format, cl_path, address, port,
     print(f"ログ          : {log_path}")
     print("-" * 64)
 
+    # プログレス表示は親プロセスで描画する。親は SDK を呼ばない（＝GIL が空く）
+    # ので、ShogunPostCL の出力行を on_log_line へ流してフェーズ進捗（Pass N/3）
+    # をライブで拾い、バー/スピナー/ETA を滑らかに更新できる。
+    progress = BatchProgress(len(x2d_files), enabled=show_progress)
+
     print("ShogunPostCL を起動しています...", flush=True)
-    proc, log_fh, reader = launch_cl(cl_path, log_path)
+    proc, log_fh, reader = launch_cl(cl_path, log_path, on_line=progress.on_log_line)
+
+    cfg = {
+        "files": x2d_files, "subjects": subjects, "level": level,
+        "out_format": out_format, "address": address, "port": port,
+        "connect_timeout": connect_timeout,
+    }
 
     results = []
-    progress = None
+    worker = None
+    cfg_path = None
     try:
-        print("接続待ち（起動完了までリトライ）...", flush=True)
-        try:
-            v, took = connect_with_retry(ViconShogunPost, address, port, connect_timeout)
-        except TimeoutError as e:
-            print(f"エラー: {e}")
-            return []
-        print(f"接続しました（{took:.1f} 秒）", flush=True)
-        print("-" * 64, flush=True)
+        print("接続待ち（別プロセスで SDK 起動・接続）...", flush=True)
+        worker, cfg_path = _spawn_worker(cfg)
 
-        total = len(x2d_files)
-        progress = BatchProgress(total, enabled=show_progress)
-        for x2d in x2d_files:
-            name = os.path.basename(x2d)
-            progress.start_file(name)
-            t0 = time.time()
+        # ワーカーの stdout を読み、イベント行でバーを駆動する。
+        # イベント以外（SDK/import の出力）はログへ退避。
+        for raw in worker.stdout:
+            if not raw.startswith(_EVENT_PREFIX):
+                log_fh.write(raw)
+                log_fh.flush()
+                continue
             try:
-                ok, msg = process_one(v, Offline, x2d, subjects, level, out_format)
-                dt = time.time() - t0
-                progress.finish_file(f"    OK  {msg}  ({dt:.1f}s)")
-                results.append((x2d, True, msg))
-            except Exception as e:
-                dt = time.time() - t0
-                progress.finish_file(f"    NG  {name}: {e}  ({dt:.1f}s)")
-                results.append((x2d, False, str(e)))
+                evt = json.loads(raw[len(_EVENT_PREFIX):])
+            except ValueError:
+                continue
+            e = evt.get("e")
+            if e == "connected":
+                print(f"接続しました（{evt.get('took', 0.0):.1f} 秒）", flush=True)
+                print("-" * 64, flush=True)
+            elif e in ("connect_failed", "fatal"):
+                print(f"エラー: {evt.get('err')}", flush=True)
+            elif e == "start":
+                progress.start_file(evt.get("name", ""))
+            elif e == "ok":
+                dt = evt.get("dt")
+                progress.finish_file(f"    OK  {evt.get('msg')}  ({dt:.1f}s)", dt)
+                results.append((evt.get("path"), True, evt.get("msg")))
+            elif e == "ng":
+                dt = evt.get("dt")
+                progress.finish_file(
+                    f"    NG  {evt.get('name', '')}: {evt.get('err', '')}  ({dt:.1f}s)", dt)
+                results.append((evt.get("path"), False, evt.get("err", "")))
+            # "done" は特に何もしない（この後 stdout が閉じてループ終了）
         progress.close()
-
-        try:
-            v.Disconnect() if hasattr(v, "Disconnect") else None
-        except Exception:
-            pass
     except KeyboardInterrupt:
-        if progress is not None:
-            progress.stop()
-        print("\n中断要求を受け取りました。ShogunPostCL を終了します...", flush=True)
+        progress.stop()
+        print("\n中断要求を受け取りました。終了します...", flush=True)
+        if worker is not None:
+            worker.terminate()
     finally:
+        if worker is not None and worker.poll() is None:
+            try:
+                worker.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                worker.kill()
         shutdown_cl(proc)
         reader.join(timeout=3)
         log_fh.close()
+        if cfg_path:
+            try:
+                os.remove(cfg_path)
+            except OSError:
+                pass
 
     return results
 
@@ -498,4 +657,7 @@ def main():
 
 
 if __name__ == "__main__":
+    # 別プロセス（ワーカー）として起動された場合は SDK 処理だけを行う。
+    if len(sys.argv) >= 3 and sys.argv[1] == "--_worker":
+        sys.exit(worker_main(sys.argv[2]))
     sys.exit(main())
