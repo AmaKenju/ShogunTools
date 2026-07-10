@@ -137,6 +137,100 @@ def discover_x2d_files(directory, recursive=False):
     return sorted(set(os.path.abspath(f) for f in files))
 
 
+class BatchProgress:
+    """バッチ全体のプログレスバーと、処理中ファイルのライブ経過表示。
+
+    TTY 環境では 1 行を \\r で上書きしてバー・パーセント・スピナー・経過秒を
+    アニメーション表示する。パイプ/リダイレクト等の非 TTY 環境では従来どおり
+    ファイルごとに 1 行ずつ出力する（アニメーションしない）。
+    """
+
+    SPIN = "|/-\\"
+    FILL = "█"   # █
+    EMPTY = "░"  # ░
+
+    def __init__(self, total, enabled=None, width=28):
+        self.total = max(total, 0)
+        self.width = width
+        self.completed = 0
+        self.enabled = (sys.stdout.isatty() and self.total > 0) if enabled is None else enabled
+        self._stop = threading.Event()
+        self._thread = None
+        self._current = ""
+        self._start = 0.0
+        self._lock = threading.Lock()
+        self._last_len = 0
+
+    @staticmethod
+    def _short(name, maxlen=32):
+        return name if len(name) <= maxlen else name[: maxlen - 1] + "…"
+
+    def _bar(self, frac):
+        filled = int(round(frac * self.width))
+        filled = max(0, min(self.width, filled))
+        return self.FILL * filled + self.EMPTY * (self.width - filled)
+
+    def _render(self):
+        frac = self.completed / self.total if self.total else 1.0
+        pct = int(frac * 100)
+        spin = self.SPIN[int(time.time() * 8) % len(self.SPIN)]
+        elapsed = time.time() - self._start
+        line = (f"\r[{self._bar(frac)}] {pct:3d}%  ({self.completed}/{self.total})  "
+                f"{spin} {self._short(self._current)}  {elapsed:5.1f}s")
+        pad = max(0, self._last_len - len(line))
+        sys.stdout.write(line + " " * pad)
+        sys.stdout.flush()
+        self._last_len = len(line)
+
+    def _clear_line(self):
+        if self.enabled and self._last_len:
+            sys.stdout.write("\r" + " " * self._last_len + "\r")
+            sys.stdout.flush()
+            self._last_len = 0
+
+    def _animate(self):
+        while not self._stop.wait(0.1):
+            with self._lock:
+                self._render()
+
+    def start_file(self, name):
+        self._current = name
+        self._start = time.time()
+        if self.enabled:
+            self._stop.clear()
+            with self._lock:
+                self._render()
+            self._thread = threading.Thread(target=self._animate, daemon=True)
+            self._thread.start()
+        else:
+            print(f"[{self.completed + 1}/{self.total}] {name} を処理中...", flush=True)
+
+    def finish_file(self, line):
+        if self.enabled and self._thread:
+            self._stop.set()
+            self._thread.join()
+            self._thread = None
+        self.completed += 1
+        self._clear_line()
+        print(line, flush=True)
+
+    def stop(self):
+        """アニメーションを止めて行をクリアする（中断時用）。"""
+        if self._thread:
+            self._stop.set()
+            self._thread.join()
+            self._thread = None
+        self._clear_line()
+
+    def close(self):
+        if self.enabled:
+            frac = self.completed / self.total if self.total else 1.0
+            pct = int(frac * 100)
+            self._clear_line()
+            print(f"[{self._bar(frac)}] {pct:3d}%  ({self.completed}/{self.total}) 完了",
+                  flush=True)
+
+
 def _drain_pipe(pipe, log_fh):
     """ShogunPostCL の出力をログファイルへ書き出すスレッド本体。"""
     for raw in iter(pipe.readline, ""):
@@ -239,7 +333,7 @@ def process_one(v, Offline, x2d_path, subjects, level, out_format):
 
 
 def run_batch(x2d_files, subjects, level, out_format, cl_path, address, port,
-              connect_timeout, log_path):
+              connect_timeout, log_path, show_progress=None):
     ViconShogunPost, Offline = import_sdk()
 
     print(f"ShogunPostCL : {cl_path}")
@@ -254,6 +348,7 @@ def run_batch(x2d_files, subjects, level, out_format, cl_path, address, port,
     proc, log_fh, reader = launch_cl(cl_path, log_path)
 
     results = []
+    progress = None
     try:
         print("接続待ち（起動完了までリトライ）...", flush=True)
         try:
@@ -265,25 +360,29 @@ def run_batch(x2d_files, subjects, level, out_format, cl_path, address, port,
         print("-" * 64, flush=True)
 
         total = len(x2d_files)
-        for i, x2d in enumerate(x2d_files, 1):
+        progress = BatchProgress(total, enabled=show_progress)
+        for x2d in x2d_files:
             name = os.path.basename(x2d)
-            print(f"[{i}/{total}] {name} を処理中...", flush=True)
+            progress.start_file(name)
             t0 = time.time()
             try:
                 ok, msg = process_one(v, Offline, x2d, subjects, level, out_format)
                 dt = time.time() - t0
-                print(f"    OK  {msg}  ({dt:.1f}s)", flush=True)
+                progress.finish_file(f"    OK  {msg}  ({dt:.1f}s)")
                 results.append((x2d, True, msg))
             except Exception as e:
                 dt = time.time() - t0
-                print(f"    NG  {name}: {e}  ({dt:.1f}s)", flush=True)
+                progress.finish_file(f"    NG  {name}: {e}  ({dt:.1f}s)")
                 results.append((x2d, False, str(e)))
+        progress.close()
 
         try:
             v.Disconnect() if hasattr(v, "Disconnect") else None
         except Exception:
             pass
     except KeyboardInterrupt:
+        if progress is not None:
+            progress.stop()
         print("\n中断要求を受け取りました。ShogunPostCL を終了します...", flush=True)
     finally:
         shutdown_cl(proc)
@@ -317,6 +416,8 @@ def main():
                         help="先頭 N 件だけ処理する（0=全件、テスト用）")
     parser.add_argument("--dry-run", action="store_true",
                         help="対象ファイルの列挙だけ行い、実行しない")
+    parser.add_argument("--no-progress", action="store_true",
+                        help="プログレスバー表示を無効化し、ファイルごとに1行ずつ出力する")
     args = parser.parse_args()
 
     directory = args.directory
@@ -375,8 +476,10 @@ def main():
 
     print("-" * 64)
     start = time.time()
+    show_progress = False if args.no_progress else None
     results = run_batch(x2d_files, subjects, args.level, args.out_format, cl_path,
-                        args.address, args.port, args.connect_timeout, log_path)
+                        args.address, args.port, args.connect_timeout, log_path,
+                        show_progress=show_progress)
     elapsed = time.time() - start
 
     print("-" * 64)
