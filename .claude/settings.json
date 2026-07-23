@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-Process -Id 28984)",
+      "Bash(python diag2.py)",
+      "Bash(python diag.py)",
+      "Bash(python -c \"from vicon_core_api import Result; print\\(list\\(Result\\)[:6]\\); print\\('Ok =', Result.Ok\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python ShogunReviewPlay.py)"
+    ]
+  }
+}
