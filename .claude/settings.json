@@ -6,7 +6,13 @@
       "Bash(python diag.py)",
       "Bash(python -c \"from vicon_core_api import Result; print\\(list\\(Result\\)[:6]\\); print\\('Ok =', Result.Ok\\)\")",
       "Bash(python -c ' *)",
-      "Bash(python ShogunReviewPlay.py)"
+      "Bash(python ShogunReviewPlay.py)",
+      "Bash(python -c \"from shogun_live_api import SubjectServices; print\\([m for m in dir\\(SubjectServices\\) if not m.startswith\\('__'\\)]\\)\")",
+      "Bash(python -m py_compile ShogunControl_v7.py)",
+      "Bash(python -m py_compile ShogunSubjectGroups.py)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\Owner\\.claude\\projects\\c--Users-Owner-Documents-GitHub-ShogunTools\\memory"
     ]
   }
 }

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "name": "ll",
+      "subjects": [
+        "LabelingCluster_1",
+        "LabelingCluster_2"
+      ]
+    }
+  ]
+}
