@@ -2,18 +2,22 @@
   "version": 1,
   "groups": [
     {
-      "name": "ll",
+      "name": "All",
       "subjects": [
-        "LabelingCluster_1",
-        "LabelingCluster_2"
-      ]
-    },
-    {
-      "name": "aaaa",
-      "subjects": [
+        "Dyki",
+        "Fuwa",
         "Kagami",
         "Kaida",
-        "Kenmochi"
+        "Kenmochi",
+        "LC1",
+        "LC2",
+        "LC3",
+        "LC4",
+        "LabelingCluster_1",
+        "LabelingCluster_2",
+        "LabelingCluster_4",
+        "Masaki",
+        "Ueda"
       ]
     }
   ]
