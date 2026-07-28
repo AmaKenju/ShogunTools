@@ -7,6 +7,14 @@
         "LabelingCluster_1",
         "LabelingCluster_2"
       ]
+    },
+    {
+      "name": "aaaa",
+      "subjects": [
+        "Kagami",
+        "Kaida",
+        "Kenmochi"
+      ]
     }
   ]
 }

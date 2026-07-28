@@ -1,20 +1,3 @@
-"""ShogunSubjectGroups.py
-
-Shogun Live 上のサブジェクト/Prop をグルーピングして、
-グループ単位でまとめて有効化/無効化するスタンドアロンツール。
-
-前提: ローカル (localhost) の Shogun Live に接続して使用する。
-
-使い方:
-    python ShogunSubjectGroups.py
-
-機能:
-    - リフレッシュで現在ロード中のサブジェクトを一覧表示
-    - 複数選択してグループを作成（複数グループをストック）
-    - グループを選んでまとめて Enable / Disable
-    - グループは subject_groups.json に自動保存され、次回起動時に復元
-"""
-
 import os
 import json
 import traceback
@@ -24,7 +7,6 @@ from tkinter import messagebox
 from vicon_core_api import Client
 from shogun_live_api import SubjectServices
 
-# --- テーマ配色 ------------------------------------------------------------
 BG = "#1E1E2E"
 CARD = "#313244"
 ACCENT = "#89DCEB"
@@ -43,12 +25,7 @@ SUBJECT_GROUPS_FILE = os.path.join(
 )
 
 
-# --- グループ永続化 --------------------------------------------------------
 def load_subject_groups():
-    """保存済みサブジェクトグループを読み込む。
-
-    戻り値: [{"name": str, "subjects": [str, ...]}, ...]
-    """
     try:
         with open(SUBJECT_GROUPS_FILE, encoding="utf-8") as f:
             data = json.load(f)
@@ -74,8 +51,6 @@ def save_subject_groups(groups):
 
 
 class SubjectGroupApp:
-    """サブジェクトグループ管理のメインウィンドウ。"""
-
     TYPE_LABELS = {
         "ERigidObject": "Prop",
         "ELabelingCluster": "Cluster",
@@ -90,15 +65,13 @@ class SubjectGroupApp:
         self.root.configure(bg=BG)
 
         self.client = None
-        self.sub = None                        # SubjectServices（未接続なら None）
-        self.groups = load_subject_groups()    # [{"name","subjects"}]
-        self.subjects = []                     # [(name, type_label, enabled)]
+        self.sub = None
+        self.groups = load_subject_groups()
+        self.subjects = []
 
         self.create_widgets()
-        # 起動時に localhost へ自動接続
         self.root.after(100, self.connect)
 
-    # ---- ウィジェット構築 ----------------------------------------------
     @staticmethod
     def _dim(hex_color):
         try:
@@ -136,7 +109,6 @@ class SubjectGroupApp:
         main = tk.Frame(self.root, bg=BG, padx=18, pady=16)
         main.pack(fill=tk.BOTH, expand=True)
 
-        # ヘッダー + 接続状態
         header = tk.Frame(main, bg=BG)
         header.pack(fill=tk.X)
         tk.Label(header, text="サブジェクトグループ管理", font=(FONT, 16, "bold"),
@@ -242,7 +214,6 @@ class SubjectGroupApp:
 
         self.refresh_group_list()
 
-    # ---- 接続 ----------------------------------------------------------
     def connect(self):
         try:
             self._status(f"{HOST} に接続中...", "info")
@@ -262,9 +233,7 @@ class SubjectGroupApp:
                 f"{HOST} の Shogun Live に接続できませんでした。\n"
                 f"Shogun Live が起動しているか確認してください。\n\n{str(e)}")
 
-    # ---- ステータス ----------------------------------------------------
     def _status(self, msg, status_type="info"):
-        color = {"success": SUCCESS, "error": ERROR, "info": ACCENT}.get(status_type, ACCENT)
         self.status_var.set(msg)
         print(f"[{status_type}] {msg}")
 
@@ -274,7 +243,6 @@ class SubjectGroupApp:
             return False
         return True
 
-    # ---- サブジェクト読み込み ------------------------------------------
     def refresh_subjects(self):
         if not self._require_conn():
             return
@@ -311,7 +279,7 @@ class SubjectGroupApp:
                 self.subject_lb.itemconfig(
                     tk.END, foreground=TEXT if is_en else MUTED)
 
-            self._on_group_select()  # メンバー表示の状態マーカーを更新
+            self._on_group_select()
             self._status(f"サブジェクト {len(self.subjects)} 件を取得（有効 {len(enabled_set)}）",
                          "success")
         except Exception as e:
@@ -322,9 +290,7 @@ class SubjectGroupApp:
         return [self.subjects[i][0] for i in self.subject_lb.curselection()
                 if 0 <= i < len(self.subjects)]
 
-    # ---- Enable/Disable 実行 -------------------------------------------
     def _apply_enabled(self, names, enable):
-        """names に対して set_subject_enabled を実行。(成功数, 失敗名リスト) を返す。"""
         ok, missing = 0, []
         for name in names:
             try:
@@ -375,7 +341,6 @@ class SubjectGroupApp:
         else:
             self._status(f"「{g['name']}」を{word}しました（{ok} 件）", "success")
 
-    # ---- グループ管理 --------------------------------------------------
     def refresh_group_list(self):
         self.group_lb.delete(0, tk.END)
         for g in self.groups:
@@ -400,7 +365,7 @@ class SubjectGroupApp:
                 mark = "●" if loaded[name] else "○"
                 color = TEXT if loaded[name] else MUTED
             else:
-                mark = "✗"  # 未ロード
+                mark = "✗"
                 color = ERROR
             self.member_lb.insert(tk.END, f"{mark}  {name}")
             self.member_lb.itemconfig(tk.END, foreground=color)
