@@ -1,0 +1,21 @@
+アプリケーション実行中にエラーが発生しました:
+RPCNotConnected: The connection to the remote function or callback is not open
+
+Traceback (most recent call last):
+  File "C:\Users\Owner\Documents\GitHub\ShogunTools\ShogunControl_v7.py", line 1935, in start_app
+    app = ShogunButtonUI(root, ip_address, csv_path)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Owner\Documents\GitHub\ShogunTools\ShogunControl_v7.py", line 699, in __init__
+    self.connect_to_shogun(ip_address)
+  File "C:\Users\Owner\Documents\GitHub\ShogunTools\ShogunControl_v7.py", line 751, in connect_to_shogun
+    self.ShogunCap = CaptureServices(self.c)
+                     ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Owner\AppData\Local\Programs\Python\Python312\Lib\site-packages\vicon_core_api\vicon_interface.py", line 35, in __init__
+    self.unsupported = self.client.check_schemas(SchemaServices.interface_schemas(self.__class__.__name__))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Owner\AppData\Local\Programs\Python\Python312\Lib\site-packages\vicon_core_api\client.py", line 135, in check_schemas
+    return self.send_command("Terminal.CheckSchemas", schema_list)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Owner\AppData\Local\Programs\Python\Python312\Lib\site-packages\vicon_core_api\client.py", line 195, in send_command
+    raise RPCError(str(Result.RPCNotConnected))
+vicon_core_api.client.RPCError: RPCNotConnected: The connection to the remote function or callback is not open
