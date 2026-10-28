@@ -1,0 +1,2029 @@
+<title>VSK・VSS エディタ</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+JP:wght@400;500;600&display=swap">
+<style>
+/* Layout: one-screen workbench — header strip, 3D capture-volume view on the left, inspector on the right (stacks under 900px). */
+:root {
+  --bg: #eceff3; --panel: #fbfcfd; --panel-2: #f2f5f8; --ink: #16202b; --muted: #5a6675; --line: #d3dae2;
+  --accent: #0b746f; --accent-ink: #ffffff; --accent-soft: #d8efed;
+  --left: #d1611b; --right: #2c68d8; --center: #8d99a6;
+  --warn: #9a6408; --warn-soft: #f8ecd2; --err: #b8322a; --err-soft: #f8dedb; --ok: #2d7a4f; --ok-soft: #dcefe3;
+  --vp-bg: #1d242c; --vp-grid: rgba(255,255,255,0.06); --vp-ink: #e8edf2; --vp-muted: #9aa6b2; --vp-joint: #c3ccd5; --vp-edge: rgba(0,0,0,0.55);
+  --sans: "IBM Plex Sans JP", "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11161c; --panel: #171e25; --panel-2: #1d252d; --ink: #e2e8ee; --muted: #95a2af; --line: #2a333d;
+  --accent: #34b3a8; --accent-ink: #04201e; --accent-soft: #143633;
+  --left: #f08c4a; --right: #6e9dff; --center: #8692a0;
+  --warn: #e2b04f; --warn-soft: #3a2f17; --err: #f07a70; --err-soft: #3b1d1b; --ok: #6cc795; --ok-soft: #173325;
+  --vp-bg: #0d1217; --vp-grid: rgba(255,255,255,0.05); --vp-ink: #e8edf2; --vp-muted: #8995a2; --vp-joint: #aeb8c2; --vp-edge: rgba(0,0,0,0.6);
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #11161c; --panel: #171e25; --panel-2: #1d252d; --ink: #e2e8ee; --muted: #95a2af; --line: #2a333d;
+  --accent: #34b3a8; --accent-ink: #04201e; --accent-soft: #143633;
+  --left: #f08c4a; --right: #6e9dff; --center: #8692a0;
+  --warn: #e2b04f; --warn-soft: #3a2f17; --err: #f07a70; --err-soft: #3b1d1b; --ok: #6cc795; --ok-soft: #173325;
+  --vp-bg: #0d1217; --vp-grid: rgba(255,255,255,0.05); --vp-ink: #e8edf2; --vp-muted: #8995a2; --vp-joint: #aeb8c2; --vp-edge: rgba(0,0,0,0.6);
+  color-scheme: dark; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 13px; line-height: 1.5; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--panel); }
+* { box-sizing: border-box; }
+button, input, select { font: inherit; color: inherit; }
+.mono, code { font-family: var(--mono); font-size: 12px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.app { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+header.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); background: var(--panel); border-bottom: 1px solid var(--line); }
+.brand { display: flex; flex-direction: column; line-height: 1.2; margin-right: 4px; }
+.brand b { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
+.brand span { font-size: 11px; color: var(--muted); }
+.slots { display: flex; flex-wrap: wrap; gap: 8px; flex: 1 1 420px; min-width: 0; }
+.slot { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 2px 8px; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel-2); min-width: 0; flex: 1 1 200px; cursor: pointer; text-align: left; }
+.slot[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--panel); }
+.slot .role { font-size: 11px; color: var(--muted); grid-column: 1 / 3; }
+.slot .fname { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; grid-column: 1 / 3; }
+.slot .kind { grid-row: 1 / 3; grid-column: 3; }
+.slot.empty { cursor: default; opacity: 0.7; }
+.pill { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 99px; font-size: 11px; font-weight: 500; border: 1px solid var(--line); background: var(--panel); color: var(--muted); white-space: nowrap; }
+.pill.tmpl { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-soft); }
+.pill.cal { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: var(--warn-soft); }
+.pill.req { color: var(--ink); }
+.pill.opt { color: var(--muted); border-style: dashed; }
+.pill.L { color: var(--left); } .pill.R { color: var(--right); }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: var(--r); border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-weight: 500; white-space: nowrap; }
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.danger { color: var(--err); border-color: color-mix(in srgb, var(--err) 50%, var(--line)); }
+.btn.danger.solid { background: var(--err); color: #fff; }
+.btn.small { padding: 2px 8px; font-size: 12px; }
+.btn.ghost { border-color: transparent; background: transparent; }
+.check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.check input { accent-color: var(--accent); }
+
+main.work { display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 480px); min-height: 0; }
+.viewport { position: relative; min-height: 0; background: var(--vp-bg); }
+.viewport canvas { display: block; touch-action: none; cursor: grab; }
+.vp-tools { position: absolute; top: 10px; left: max(10px, env(safe-area-inset-left, 0px)); right: 10px; display: flex; flex-wrap: wrap; gap: 6px; pointer-events: none; }
+.vp-tools > * { pointer-events: auto; }
+.seg-ctl { display: inline-flex; border: 1px solid rgba(255,255,255,0.14); border-radius: var(--r); overflow: hidden; background: rgba(13,18,23,0.72); }
+.seg-ctl button { background: transparent; border: 0; color: var(--vp-muted); padding: 4px 10px; cursor: pointer; font-size: 12px; }
+.seg-ctl button[aria-pressed="true"] { color: var(--vp-ink); background: rgba(255,255,255,0.12); }
+.seg-ctl label { color: var(--vp-muted); padding: 4px 10px; font-size: 12px; display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
+.seg-ctl label input { accent-color: var(--accent); }
+.vp-hint { position: absolute; left: max(12px, env(safe-area-inset-left, 0px)); bottom: 10px; color: var(--vp-muted); font-size: 11px; pointer-events: none; }
+.vp-legend { position: absolute; right: 12px; bottom: 10px; display: flex; gap: 12px; color: var(--vp-muted); font-size: 11px; pointer-events: none; }
+.vp-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+.tip { position: absolute; pointer-events: none; background: rgba(13,18,23,0.92); color: var(--vp-ink); padding: 4px 8px; border-radius: 4px; font-size: 12px; font-family: var(--mono); white-space: nowrap; transform: translate(10px, -130%); }
+.demo-band { position: absolute; top: 48px; left: max(10px, env(safe-area-inset-left, 0px)); right: 10px; max-width: 330px; background: rgba(13,18,23,0.86); color: var(--vp-ink); border: 1px solid rgba(255,255,255,0.12); border-radius: var(--r); padding: 10px 12px; font-size: 12px; }
+.demo-band b { color: #fff; }
+.demo-band .btn { margin-top: 8px; background: transparent; color: var(--vp-ink); border-color: rgba(255,255,255,0.3); }
+
+aside.panel { display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-height: 0; background: var(--panel); border-left: 1px solid var(--line); }
+.editbar { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel-2); font-size: 12px; color: var(--muted); }
+.editbar strong { color: var(--ink); font-weight: 600; }
+nav.tabs { display: flex; border-bottom: 1px solid var(--line); padding: 0 8px; overflow-x: auto; }
+nav.tabs button { border: 0; background: none; padding: 10px 10px 9px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; font-weight: 500; white-space: nowrap; }
+nav.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+nav.tabs .count { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: 4px; }
+.tabbody { overflow-y: auto; min-height: 0; padding: 12px 14px 28px; display: flex; flex-direction: column; gap: 14px; }
+.tabbody[hidden] { display: none; }
+.search { width: 100%; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel-2); }
+.listbox { position: relative; border: 1px solid var(--line); border-radius: var(--r); max-height: 230px; overflow-y: auto; background: var(--panel-2); }
+.listbox .row { display: flex; align-items: center; gap: 8px; padding: 3px 8px; cursor: pointer; font-family: var(--mono); font-size: 12px; border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent); }
+.listbox .row:hover { background: var(--panel); }
+.listbox .row[aria-selected="true"] { background: var(--accent-soft); color: var(--ink); }
+.listbox .row .meta { margin-left: auto; color: var(--muted); font-size: 11px; font-family: var(--sans); display: flex; gap: 6px; align-items: center; }
+.dot { width: 9px; height: 9px; border-radius: 50%; flex: none; box-shadow: 0 0 0 1px rgba(0,0,0,0.25); }
+.card { border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); }
+.card > header { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 10px 12px 8px; border-bottom: 1px solid var(--line); }
+.card > header h3 { margin: 0; font-size: 15px; font-family: var(--mono); font-weight: 500; }
+.card > header .sub { color: var(--muted); font-size: 12px; }
+.card section { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.card section + section { border-top: 1px solid var(--line); }
+h4 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; color: var(--muted); display: flex; gap: 8px; align-items: center; }
+h4 .right { margin-left: auto; font-weight: 400; letter-spacing: 0; }
+.note { font-size: 12px; color: var(--muted); margin: 0; }
+.note.warn { color: var(--warn); background: var(--warn-soft); padding: 6px 8px; border-radius: 4px; }
+.note.err { color: var(--err); background: var(--err-soft); padding: 6px 8px; border-radius: 4px; }
+.note.ok { color: var(--ok); background: var(--ok-soft); padding: 6px 8px; border-radius: 4px; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 12px; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; font-family: var(--mono); min-width: 0; overflow-wrap: anywhere; }
+.prow { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 4px 8px; align-items: center; padding: 6px 0; border-top: 1px dashed var(--line); }
+.prow:first-of-type { border-top: 0; }
+.prow .pname { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.prow .pmeta { grid-column: 1 / 3; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; color: var(--muted); }
+.prow input[type=range] { grid-column: 1 / 3; width: 100%; accent-color: var(--accent); }
+input.num { width: 100%; padding: 3px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel-2); font-family: var(--mono); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+input.num:focus { background: var(--panel); }
+.dof { display: grid; grid-template-columns: 70px minmax(0,1fr) 54px; gap: 2px 8px; align-items: center; padding: 6px 0; border-top: 1px dashed var(--line); }
+.dof:first-of-type { border-top: 0; }
+.dof .lab { font-size: 12px; font-weight: 500; display: flex; align-items: center; gap: 4px; }
+.dof .val { font-family: var(--mono); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+.dof .stats { grid-column: 1 / 4; font-size: 11px; color: var(--muted); font-family: var(--mono); display: flex; gap: 12px; flex-wrap: wrap; }
+.dof input[type=range] { width: 100%; accent-color: var(--accent); }
+.rangebar { grid-column: 1 / 4; position: relative; height: 16px; background: var(--panel-2); border-radius: 3px; border: 1px solid var(--line); overflow: hidden; }
+.rangebar .orig { position: absolute; top: 3px; bottom: 3px; background: color-mix(in srgb, var(--muted) 35%, transparent); border-radius: 2px; }
+.rangebar .cur { position: absolute; top: 0; bottom: 0; border: 2px solid var(--accent); border-radius: 3px; }
+.rangebar .zero { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--ink); opacity: 0.5; }
+.rangebar .ticks { position: absolute; inset: 0; display: flex; justify-content: space-between; padding: 0 3px; font-size: 9px; color: var(--muted); font-family: var(--mono); align-items: center; }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.grid3 label, .field { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); min-width: 0; }
+.field input:not([type=checkbox]):not([type=radio]):not([type=color]), .field select { padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel-2); font-size: 12px; min-width: 0; width: 100%; }
+.field input[type=color] { width: 100%; height: 28px; padding: 0 2px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel-2); }
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.nudge { display: grid; grid-template-columns: 22px repeat(4, minmax(0, 1fr)) 70px; gap: 4px; align-items: center; font-size: 12px; }
+.nudge b { font-family: var(--mono); font-weight: 500; color: var(--muted); }
+.nudge .loc { font-family: var(--mono); text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 8px; border: 1px solid var(--line); border-radius: 99px; font-family: var(--mono); font-size: 11px; background: var(--panel-2); }
+.chip button { border: 0; background: none; cursor: pointer; color: var(--muted); padding: 0 4px; font-size: 13px; line-height: 1; }
+.chip button:hover { color: var(--err); }
+.filters { display: flex; flex-wrap: wrap; gap: 4px; }
+.filters button { border: 1px solid var(--line); background: var(--panel-2); border-radius: 99px; padding: 2px 10px; cursor: pointer; font-size: 12px; color: var(--muted); }
+.filters button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r); }
+table.ptable { border-collapse: collapse; width: 100%; font-size: 12px; }
+table.ptable th { position: sticky; top: 0; background: var(--panel-2); text-align: left; font-weight: 500; color: var(--muted); padding: 4px 6px; border-bottom: 1px solid var(--line); font-size: 11px; }
+table.ptable td { padding: 2px 6px; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+table.ptable td.n { font-family: var(--mono); min-width: 150px; max-width: 220px; overflow-wrap: anywhere; }
+table.ptable td input.num { min-width: 86px; }
+table.ptable tr.changed td.n { color: var(--accent); font-weight: 500; }
+table.ptable td.ro { font-family: var(--mono); color: var(--muted); text-align: right; }
+.bulk { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
+.bulk input.num { width: 80px; }
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 6px; }
+.stat { border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; background: var(--panel-2); }
+.stat b { display: block; font-family: var(--mono); font-size: 16px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 11px; color: var(--muted); }
+ul.log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+ul.log li { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 12px; }
+ul.log li:first-child { border-top: 0; }
+ul.log .tag { font-family: var(--mono); font-size: 10px; color: var(--muted); padding-top: 2px; }
+ul.log .what { overflow-wrap: anywhere; }
+ul.log .det { color: var(--muted); font-size: 11px; display: block; }
+.issue { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: start; font-size: 12px; padding: 4px 0; }
+.sev { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; letter-spacing: 0.04em; }
+.sev.error { background: var(--err-soft); color: var(--err); } .sev.warn { background: var(--warn-soft); color: var(--warn); } .sev.info { background: var(--panel-2); color: var(--muted); }
+.confirm { border: 1px solid color-mix(in srgb, var(--err) 50%, var(--line)); background: var(--err-soft); border-radius: var(--r); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.row-btns { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.empty-state { color: var(--muted); font-size: 12px; padding: 12px; border: 1px dashed var(--line); border-radius: var(--r); text-align: center; }
+.overlay { position: fixed; inset: 0; background: rgba(10,14,18,0.55); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+.overlay[hidden] { display: none; }
+.dialog { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; width: min(520px, 100%); max-height: 90vh; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 20px 50px rgba(0,0,0,0.35); }
+.dialog h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.dropzone { position: fixed; inset: 0; z-index: 60; background: color-mix(in srgb, var(--accent) 22%, transparent); border: 3px dashed var(--accent); display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 600; color: var(--ink); pointer-events: none; }
+.dropzone[hidden] { display: none; }
+.toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--panel); padding: 8px 14px; border-radius: var(--r); font-size: 13px; z-index: 70; max-width: min(560px, calc(100% - 32px)); box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
+.toast[hidden] { display: none; }
+.toast.err { background: var(--err); color: #fff; }
+details.adv > summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+details.adv[open] > summary { margin-bottom: 6px; }
+@media (max-width: 900px) {
+  .app { height: auto; display: block; }
+  main.work { display: block; }
+  .viewport { height: 58vh; min-height: 320px; }
+  aside.panel { display: block; border-left: 0; border-top: 1px solid var(--line); }
+  .tabbody { overflow: visible; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .vp-legend, .vp-hint, .demo-band { display: none; }
+}
+.demo-note { flex-basis: 100%; color: var(--warn); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="app" id="app">
+  <header class="bar">
+    <div class="brand"><b>VSK・VSS エディタ</b><span>Vicon Shogun のスケルトンファイルを編集</span></div>
+    <div class="slots" id="slots"></div>
+    <div class="actions">
+      <label class="btn primary" for="fileInput">ファイルを開く</label>
+      <input id="fileInput" type="file" accept=".vsk,.vss,.vst,.xml" multiple hidden>
+      <button class="btn" id="undoBtn" title="元に戻す (Ctrl+Z)" disabled>元に戻す</button>
+      <button class="btn" id="redoBtn" title="やり直し (Ctrl+Shift+Z)" disabled>やり直し</button>
+      <button class="btn" id="exportBtn" disabled>書き出し</button>
+    </div>
+  </header>
+  <main class="work">
+    <section class="viewport" id="viewport" aria-label="3D ビュー">
+      <canvas id="cv"></canvas>
+      <div class="vp-tools">
+        <div class="seg-ctl" role="group" aria-label="視点">
+          <button data-view="front">正面</button><button data-view="side">側面</button><button data-view="top">上</button><button data-view="persp" aria-pressed="true">斜め</button>
+        </div>
+        <div class="seg-ctl" role="group" aria-label="表示">
+          <label><input type="checkbox" id="optLabels" checked>名前</label>
+          <label><input type="checkbox" id="optSticks" checked>スティック</label>
+          <label><input type="checkbox" id="optGhost" checked>ペアを重ねる</label>
+        </div>
+        <div class="seg-ctl"><button id="focusBtn">選択に寄る</button><button id="fitBtn">全体</button></div>
+      </div>
+      <div class="demo-band" id="demoBand" hidden>
+        <b>デモを表示しています。</b> 架空の小さなモデルで、Vicon のデータではありません。<br>
+        VST・VSK・VSS をこの画面にドロップするか「ファイルを開く」で読み込むと、ここに表示されます。ラベリング用（VST/VSK）とソルビング用（VSS）を同時に開くとペアとして扱います。
+        <div><button class="btn small" id="hideDemoBand">閉じる</button></div>
+      </div>
+      <div class="tip" id="tip" hidden></div>
+      <div class="vp-hint">ドラッグで回転 ・ Shift＋ドラッグで移動 ・ ホイールで拡大 ・ ダブルクリックで注目</div>
+      <div class="vp-legend"><span><i style="background:var(--left)"></i>左</span><span><i style="background:var(--right)"></i>右</span><span><i style="background:var(--vp-muted);height:2px;border-top:1px dashed var(--vp-muted);background:none"></i>ペア</span></div>
+    </section>
+    <aside class="panel">
+      <div class="editbar" id="editbar"></div>
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-tab="skel" aria-selected="true">骨格</button>
+        <button role="tab" data-tab="mark" aria-selected="false">マーカー</button>
+        <button role="tab" data-tab="param" aria-selected="false">パラメータ</button>
+        <button role="tab" data-tab="check" aria-selected="false">変更と検証<span class="count" id="changeCount"></span></button>
+      </nav>
+      <div class="tabbody" id="tab-skel"></div>
+      <div class="tabbody" id="tab-mark" hidden></div>
+      <div class="tabbody" id="tab-param" hidden></div>
+      <div class="tabbody" id="tab-check" hidden></div>
+    </aside>
+  </main>
+</div>
+<div class="overlay" id="exportDlg" hidden><div class="dialog" role="dialog" aria-labelledby="expTitle" id="exportBody"></div></div>
+<div class="dropzone" id="dropzone" hidden>ここにドロップして読み込む（.vst / .vsk / .vss）</div>
+<div class="toast" id="toast" hidden></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+/* KinematicModel engine: parse / evaluate / edit / serialize Vicon VST・VSK・VSS */
+'use strict';
+const KM = (() => {
+
+  /* ---------- number formatting ---------- */
+  // C printf("%.17g") compatible (the format Shogun writes)
+  function g17(x) {
+    if (typeof x !== 'number' || !isFinite(x)) return String(x);
+    if (Object.is(x, -0)) return '-0';
+    if (x === 0) return '0';
+    const s = x.toExponential(16);
+    const k = s.indexOf('e');
+    const ex = parseInt(s.slice(k + 1), 10);
+    if (ex < -4 || ex >= 17) {
+      let m = s.slice(0, k);
+      if (m.includes('.')) m = m.replace(/0+$/, '').replace(/\.$/, '');
+      return m + 'e' + (ex < 0 ? '-' : '+') + String(Math.abs(ex)).padStart(2, '0');
+    }
+    let f = x.toFixed(Math.max(0, 16 - ex));
+    if (f.includes('.')) f = f.replace(/0+$/, '').replace(/\.$/, '');
+    return f;
+  }
+  function nums(str) { return str == null || str.trim() === '' ? [] : str.trim().split(/\s+/).map(Number); }
+  function joinG(arr) { return arr.map(g17).join(' '); }
+
+  /* ---------- expressions ---------- */
+  const FUNCS = { cos: Math.cos, sin: Math.sin, tan: Math.tan, acos: Math.acos, asin: Math.asin, atan: Math.atan,
+    sqrt: Math.sqrt, abs: Math.abs, exp: Math.exp, log: Math.log, atan2: Math.atan2, pow: Math.pow, min: Math.min, max: Math.max };
+  function tokenize(s) {
+    const out = []; let i = 0;
+    while (i < s.length) {
+      const c = s[i];
+      if (c === ' ' || c === '\t' || c === '\n' || c === '\r') { i++; continue; }
+      if (/[0-9.]/.test(c)) {
+        const m = /^(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?/.exec(s.slice(i));
+        if (!m) throw new Error('数値を読めません: ' + s);
+        out.push({ t: 'num', v: parseFloat(m[0]) }); i += m[0].length; continue;
+      }
+      if (c === "'") {
+        const j = s.indexOf("'", i + 1); if (j < 0) throw new Error('引用符が閉じていません: ' + s);
+        out.push({ t: 'id', v: s.slice(i + 1, j) }); i = j + 1; continue;
+      }
+      if (/[A-Za-z_]/.test(c)) {
+        const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(s.slice(i));
+        out.push({ t: 'id', v: m[0] }); i += m[0].length; continue;
+      }
+      if ('+-*/^(),'.includes(c)) { out.push({ t: c }); i++; continue; }
+      throw new Error('式に使えない文字 "' + c + '": ' + s);
+    }
+    return out;
+  }
+  function parse(s) {
+    const tk = tokenize(s); let p = 0;
+    const peek = () => tk[p] && tk[p].t;
+    function expr() { let a = term(); while (peek() === '+' || peek() === '-') { const op = tk[p++].t; a = { t: 'bin', op, a, b: term() }; } return a; }
+    function term() { let a = unary(); while (peek() === '*' || peek() === '/') { const op = tk[p++].t; a = { t: 'bin', op, a, b: unary() }; } return a; }
+    function unary() { if (peek() === '-') { p++; return { t: 'neg', a: unary() }; } if (peek() === '+') { p++; return unary(); } return power(); }
+    function power() { const a = primary(); if (peek() === '^') { p++; return { t: 'bin', op: '^', a, b: unary() }; } return a; }
+    function primary() {
+      const k = tk[p++];
+      if (!k) throw new Error('式が途中で終わっています: ' + s);
+      if (k.t === 'num') return { t: 'num', v: k.v };
+      if (k.t === 'id') {
+        if (peek() === '(' && FUNCS[k.v]) {
+          p++; const args = [];
+          if (peek() !== ')') { args.push(expr()); while (peek() === ',') { p++; args.push(expr()); } }
+          if (tk[p++]?.t !== ')') throw new Error('")" がありません: ' + s);
+          return { t: 'call', f: k.v, args };
+        }
+        return { t: 'id', n: k.v };
+      }
+      if (k.t === '(') { const e = expr(); if (tk[p++]?.t !== ')') throw new Error('")" がありません: ' + s); return e; }
+      throw new Error('式を解釈できません: ' + s);
+    }
+    const e = expr(); if (p !== tk.length) throw new Error('式の末尾に余分な記号があります: ' + s);
+    return e;
+  }
+  function evalAst(a, look) {
+    switch (a.t) {
+      case 'num': return a.v;
+      case 'id': return look(a.n);
+      case 'neg': return -evalAst(a.a, look);
+      case 'call': return FUNCS[a.f](...a.args.map(x => evalAst(x, look)));
+      case 'bin': {
+        const x = evalAst(a.a, look), y = evalAst(a.b, look);
+        switch (a.op) { case '+': return x + y; case '-': return x - y; case '*': return x * y; case '/': return x / y; case '^': return Math.pow(x, y); }
+      }
+    }
+    return NaN;
+  }
+  function namesOf(a, set) {
+    if (a.t === 'id') set.add(a.n);
+    else if (a.t === 'neg') namesOf(a.a, set);
+    else if (a.t === 'bin') { namesOf(a.a, set); namesOf(a.b, set); }
+    else if (a.t === 'call') a.args.forEach(x => namesOf(x, set));
+    return set;
+  }
+  const cache = new Map();
+  function compile(s) {
+    let c = cache.get(s);
+    if (!c) {
+      try { const ast = parse(s); c = { ast, names: [...namesOf(ast, new Set())], err: null }; }
+      catch (e) { c = { ast: null, names: [], err: e.message }; }
+      cache.set(s, c);
+    }
+    return c;
+  }
+  // split a vector attribute into its component expressions (whitespace at paren depth 0)
+  function splitTop(v) {
+    const out = []; let depth = 0, cur = '';
+    for (const ch of v) {
+      if (ch === '(') depth++; else if (ch === ')') depth--;
+      if ((ch === ' ' || ch === '\t') && depth === 0) { if (cur) { out.push(cur); cur = ''; } }
+      else cur += ch;
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+  const NUMRE = /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/;
+  const isNumStr = s => NUMRE.test(s);
+
+  /* ---------- small linear algebra (row-major 3x3 + translation) ---------- */
+  const I3 = () => [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  function mul3(A, B) {
+    const C = new Array(9);
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) C[r * 3 + c] = A[r * 3] * B[c] + A[r * 3 + 1] * B[3 + c] + A[r * 3 + 2] * B[6 + c];
+    return C;
+  }
+  const mv3 = (A, v) => [A[0] * v[0] + A[1] * v[1] + A[2] * v[2], A[3] * v[0] + A[4] * v[1] + A[5] * v[2], A[6] * v[0] + A[7] * v[1] + A[8] * v[2]];
+  const mtv3 = (A, v) => [A[0] * v[0] + A[3] * v[1] + A[6] * v[2], A[1] * v[0] + A[4] * v[1] + A[7] * v[2], A[2] * v[0] + A[5] * v[1] + A[8] * v[2]];
+  function axisAngle(ax, ang) {
+    const n = Math.hypot(ax[0], ax[1], ax[2]); if (n < 1e-12 || Math.abs(ang) < 1e-15) return I3();
+    const x = ax[0] / n, y = ax[1] / n, z = ax[2] / n, c = Math.cos(ang), s = Math.sin(ang), t = 1 - c;
+    return [t * x * x + c, t * x * y - s * z, t * x * z + s * y, t * x * y + s * z, t * y * y + c, t * y * z - s * x, t * x * z - s * y, t * y * z + s * x, t * z * z + c];
+  }
+  function rotvec(r) { const a = Math.hypot(r[0], r[1], r[2]); return a < 1e-15 ? I3() : axisAngle(r, a); }
+  const tf = (R, t) => ({ R, t });
+  const compose = (A, B) => ({ R: mul3(A.R, B.R), t: [...mv3(A.R, B.t)].map((v, i) => v + A.t[i]) });
+  const apply = (T, p) => mv3(T.R, p).map((v, i) => v + T.t[i]);
+  const invApply = (T, p) => mtv3(T.R, [p[0] - T.t[0], p[1] - T.t[1], p[2] - T.t[2]]);
+  const ID = () => tf(I3(), [0, 0, 0]);
+
+  /* ---------- XML helpers ---------- */
+  const kids = (el, tag) => { const o = []; for (const c of el.children) if (!tag || c.tagName === tag) o.push(c); return o; };
+  const kid = (el, tag) => { for (const c of el.children) if (c.tagName === tag) return c; return null; };
+  function indentOf(el) { const p = el.previousSibling; return p && p.nodeType === 3 ? p.data : null; }
+  function insertAfter(ref, el) {
+    const parent = ref.parentNode, ws = indentOf(ref) ?? '\n', next = ref.nextSibling;
+    parent.insertBefore(ref.ownerDocument.createTextNode(ws), next); parent.insertBefore(el, next);
+  }
+  function appendChildIndented(parent, el) {
+    const last = kids(parent).pop();
+    if (last) { insertAfter(last, el); return; }
+    const pin = (indentOf(parent) ?? '\n');
+    if (!parent.firstChild) parent.appendChild(parent.ownerDocument.createTextNode(pin));
+    parent.insertBefore(parent.ownerDocument.createTextNode(pin + '\t'), parent.lastChild);
+    parent.insertBefore(el, parent.lastChild);
+  }
+  function removeEl(el) {
+    const p = el.previousSibling;
+    if (p && p.nodeType === 3 && /^\s*$/.test(p.data)) p.remove();
+    el.remove();
+  }
+  const escAttr = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const escText = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const JOINT_DOF = { JointFree: 6, JointBall: 3, JointHardySpicer: 2, JointHinge: 1, JointDummy: 0 };
+  const POSE_ATTRS = ['PRE-POSITION', 'PRE-ORIENTATION', 'INVERSE-POST-POSITION', 'INVERSE-POST-ORIENTATION'];
+  const COV_ATTRS = ['COVARIANCE', 'RANGE-MATRIX'];
+  const CENTER_ATTRS = ['MEAN', 'RANGE-CENTRING-STATE'];
+
+  /* ---------- Model ---------- */
+  class Model {
+    constructor(fileName, text) {
+      this.fileName = fileName;
+      this.ext = (fileName.split('.').pop() || '').toLowerCase();
+      this.load(text);
+      this.originalText = text;
+      this.role = this.ext === 'vss' ? 'solving' : 'labeling';
+      this.isTemplate = this.ext === 'vst' || /<!--/.test(this.prefix);
+    }
+    get baseName() { return this.fileName.replace(/\.[^.]+$/, ''); }
+    load(text) {
+      this.eol = text.includes('\r\n') ? '\r\n' : '\n';
+      const rootIdx = text.indexOf('<KinematicModel');
+      if (rootIdx < 0) throw new Error('KinematicModel 要素が見つかりません。VST / VSK / VSS ファイルを選んでください。');
+      const endTag = '</KinematicModel>', endIdx = text.lastIndexOf(endTag);
+      if (endIdx < 0) throw new Error('ファイルの末尾が欠けています（</KinematicModel> がありません）。');
+      this.prefix = text.slice(0, rootIdx);
+      this.suffix = text.slice(endIdx + endTag.length);
+      const doc = new DOMParser().parseFromString(text.slice(rootIdx, endIdx + endTag.length), 'application/xml');
+      const err = doc.getElementsByTagName('parsererror')[0];
+      if (err) throw new Error('XML を読み込めません: ' + err.textContent.slice(0, 160));
+      this.doc = doc; this.root = doc.documentElement;
+      this.reindex();
+    }
+    serialize() {
+      const eol = this.eol, out = [this.prefix];
+      const ser = n => {
+        if (n.nodeType === 1) {
+          out.push('<', n.tagName);
+          for (const a of n.attributes) out.push(' ', a.name, '="', escAttr(a.value), '"');
+          if (!n.firstChild) out.push('/>');
+          else { out.push('>'); for (let c = n.firstChild; c; c = c.nextSibling) ser(c); out.push('</', n.tagName, '>'); }
+        } else if (n.nodeType === 3) out.push(eol === '\n' ? escText(n.data) : escText(n.data).replace(/\n/g, eol));
+        else if (n.nodeType === 8) out.push('<!--', n.data, '-->');
+        else if (n.nodeType === 4) out.push('<![CDATA[', n.data, ']]>');
+      };
+      ser(this.root); out.push(this.suffix);
+      return out.join('');
+    }
+
+    reindex() {
+      const R = this.root;
+      this.paramsEl = kid(R, 'Parameters');
+      this.params = new Map();
+      if (this.paramsEl) for (const el of kids(this.paramsEl)) if (el.tagName === 'Parameter' || el.tagName === 'StaticParameter') this.params.set(el.getAttribute('NAME'), el);
+      // skeleton
+      this.segments = new Map(); this.segList = [];
+      const walk = (el, parent, depth) => {
+        for (const c of kids(el, 'Segment')) {
+          const joint = kids(c).find(x => x.tagName.startsWith('Joint')) || null;
+          const seg = { name: c.getAttribute('NAME'), el: c, joint, jt: joint ? kid(joint, 'JointTemplate') : null, jointType: joint ? joint.tagName : null, parent, children: [], depth };
+          this.segments.set(seg.name, seg); this.segList.push(seg);
+          if (parent) parent.children.push(seg);
+          walk(c, seg, depth + 1);
+        }
+      };
+      const sk = kid(R, 'Skeleton'); if (sk) walk(sk, null, 0);
+      // markers & sticks
+      const ms = kid(R, 'MarkerSet');
+      this.markersEl = ms ? kid(ms, 'Markers') : null; this.sticksEl = ms ? kid(ms, 'Sticks') : null;
+      this.markers = new Map();
+      if (this.markersEl) for (const el of kids(this.markersEl, 'Marker')) this.markers.set(el.getAttribute('NAME'), el);
+      this.sticks = this.sticksEl ? kids(this.sticksEl, 'Stick') : [];
+      // targets
+      const ts = kid(R, 'TargetSet'); this.targetsEl = ts ? kid(ts, 'Targets') : null;
+      this.targets = []; this.rigidBodies = [];
+      if (this.targetsEl) for (const el of kids(this.targetsEl)) {
+        if (el.tagName === 'TargetLocalPointToWorldPoint') this.targets.push({ el, marker: el.getAttribute('MARKER'), segment: el.getAttribute('SEGMENT'), name: el.getAttribute('NAME') });
+        else if (el.tagName === 'TargetRigidBody') {
+          const rb = { el, segment: el.getAttribute('SEGMENT'), name: el.getAttribute('NAME'), markers: kids(el, 'RigidBodyMarker').map(m => ({ el: m, marker: m.getAttribute('NAME') })) };
+          this.rigidBodies.push(rb);
+        }
+      }
+      this.targetsByMarker = new Map();
+      for (const t of this.targets) { if (!this.targetsByMarker.has(t.marker)) this.targetsByMarker.set(t.marker, []); this.targetsByMarker.get(t.marker).push(t); }
+      this.rbByMarker = new Map();
+      for (const rb of this.rigidBodies) for (const m of rb.markers) this.rbByMarker.set(m.marker, { rb, m });
+      // PCA joints
+      this.pcaJoints = new Map();
+      for (const p of R.getElementsByTagName('PcaControlledParams')) for (const j of (p.getAttribute('JOINT-NAMES') || '').trim().split(/\s+/)) if (j) this.pcaJoints.set(j, p.getAttribute('NAME'));
+      this.buildRefs();
+      this._pv = new Map();
+    }
+
+    /* every place an expression references a parameter */
+    buildRefs() {
+      const refs = new Map(); const add = (name, ref) => { if (!refs.has(name)) refs.set(name, []); refs.get(name).push(ref); };
+      const scanVec = (el, attr, owner) => {
+        const v = el.getAttribute(attr); if (v == null) return;
+        splitTop(v).forEach((comp, i) => { if (!isNumStr(comp)) for (const n of compile(comp).names) add(n, { el, attr, comp: i, owner }); });
+      };
+      for (const s of this.segList) if (s.jt) for (const a of POSE_ATTRS) scanVec(s.jt, a, { kind: 'segment', name: s.name });
+      for (const t of this.targets) scanVec(t.el, 'POSITION', { kind: 'target', name: t.name, marker: t.marker });
+      for (const rb of this.rigidBodies) for (const m of rb.markers) scanVec(m.el, 'POSITION', { kind: 'target', name: rb.name, marker: m.marker });
+      for (const [name, el] of this.params) { const ex = el.getAttribute('EXPRESSION'); if (ex) for (const n of compile(ex).names) add(n, { el, attr: 'EXPRESSION', comp: 0, owner: { kind: 'param', name } }); }
+      this.refs = refs;
+    }
+
+    /* ---------- parameters ---------- */
+    invalidate() { this._pv = new Map(); }
+    pval(name, stack) {
+      if (this._pv.has(name)) return this._pv.get(name);
+      const el = this.params.get(name); let v = NaN;
+      if (el) {
+        const ex = el.getAttribute('EXPRESSION');
+        // a stored VALUE wins over EXPRESSION (Shogun evaluates the joints from VALUE)
+        if (ex && !el.hasAttribute('VALUE')) {
+          stack = stack || new Set(); if (stack.has(name)) return NaN; stack.add(name);
+          const c = compile(ex); v = c.ast ? evalAst(c.ast, n => this.pval(n, stack)) : NaN;
+        } else v = parseFloat(el.getAttribute('VALUE'));
+      }
+      this._pv.set(name, v); return v;
+    }
+    look() { return n => this.pval(n); }
+    evalVec(str) {
+      return splitTop(str || '').map(c => isNumStr(c) ? parseFloat(c) : (compile(c).ast ? evalAst(compile(c).ast, this.look()) : NaN));
+    }
+    paramInfo(name) {
+      const el = this.params.get(name); if (!el) return null;
+      const g = a => el.getAttribute(a);
+      return { name, el, isStatic: el.tagName === 'StaticParameter', value: this.pval(name), valueStr: g('VALUE'), prior: g('PRIOR') != null ? parseFloat(g('PRIOR')) : null,
+        sd: g('SD') != null ? parseFloat(g('SD')) : null, expression: g('EXPRESSION'), hidden: g('HIDDEN') === 'true', quantity: g('QUANTITY'), refs: this.refs.get(name) || [] };
+    }
+    paramGroup(name) {
+      if (/^Scaling_/.test(name)) return 'scale';
+      if (/HandShapeCoef_\d+$/.test(name)) return 'hand';
+      if (/^Target_[XYZ]_/.test(name)) return 'finger';
+      if (/^LabelingCluster_/.test(name)) return 'cluster';
+      if (/^[A-Z0-9]+_[A-Za-z0-9]+_(Dynamic_)?[XYZ]$/.test(name)) return 'marker';
+      return 'body';
+    }
+
+    /* re-evaluate the numeric joint attributes from their JointTemplate expressions */
+    syncJoints() {
+      let changed = 0;
+      for (const s of this.segList) {
+        if (!s.jt || !s.joint) continue;
+        for (const a of POSE_ATTRS) {
+          const tv = s.jt.getAttribute(a); if (tv == null) continue;
+          const comps = splitTop(tv); if (comps.every(isNumStr)) continue;
+          const v = this.evalVec(tv); if (v.some(x => !isFinite(x))) continue;
+          const cur = nums(s.joint.getAttribute(a));
+          const same = cur.length === v.length && cur.every((x, i) => x === v[i] || Math.abs(x - v[i]) <= 1e-12 * Math.max(1, Math.abs(v[i])));
+          if (!same) { s.joint.setAttribute(a, joinG(v)); changed++; }
+        }
+      }
+      return changed;
+    }
+
+    /* ---------- kinematics (display) ---------- */
+    jointDofTransform(seg, q) {
+      const j = seg.joint; if (!j || !q) return ID();
+      switch (seg.jointType) {
+        case 'JointHinge': return tf(axisAngle(nums(j.getAttribute('AXIS')), q[0] || 0), [0, 0, 0]);
+        case 'JointHardySpicer': { const a = nums(j.getAttribute('AXIS-PAIR')); return tf(mul3(axisAngle(a.slice(0, 3), q[0] || 0), axisAngle(a.slice(3, 6), q[1] || 0)), [0, 0, 0]); }
+        case 'JointBall': return tf(rotvec([q[0] || 0, q[1] || 0, q[2] || 0]), [0, 0, 0]);
+        case 'JointFree': return tf(rotvec([q[0] || 0, q[1] || 0, q[2] || 0]), [q[3] || 0, q[4] || 0, q[5] || 0]);
+      }
+      return ID();
+    }
+    computeWorld(pose) {
+      const W = new Map();
+      for (const s of this.segList) {
+        const j = s.joint; const P = s.parent ? W.get(s.parent.name) : ID();
+        if (!j) { W.set(s.name, P); continue; }
+        const pp = nums(j.getAttribute('PRE-POSITION')), po = nums(j.getAttribute('PRE-ORIENTATION'));
+        const ip = nums(j.getAttribute('INVERSE-POST-POSITION')), io = nums(j.getAttribute('INVERSE-POST-ORIENTATION'));
+        let M = compose(P, tf(rotvec(po.length === 3 ? po : [0, 0, 0]), pp.length === 3 ? pp : [0, 0, 0]));
+        if (pose && pose[s.name]) M = compose(M, this.jointDofTransform(s, pose[s.name]));
+        if (ip.length === 3 || io.length === 3) M = compose(M, tf(rotvec(io.length === 3 ? io : [0, 0, 0]), ip.length === 3 ? ip : [0, 0, 0]));
+        W.set(s.name, M);
+      }
+      return W;
+    }
+    targetLocal(t) { return this.evalVec(t.el.getAttribute('POSITION')); }
+    rbMarkerLocal(rb, m) {
+      const p = this.evalVec(m.el.getAttribute('POSITION'));
+      const pos = nums(rb.el.getAttribute('POSITION')), ori = nums(rb.el.getAttribute('ORIENTATION'));
+      return apply(tf(rotvec(ori.length === 3 ? ori : [0, 0, 0]), pos.length === 3 ? pos : [0, 0, 0]), p);
+    }
+    markerPlacements(name) {
+      const out = [];
+      for (const t of this.targetsByMarker.get(name) || []) out.push({ kind: 'target', t, segment: t.segment, local: this.targetLocal(t) });
+      const r = this.rbByMarker.get(name); if (r) out.push({ kind: 'rigid', rb: r.rb, m: r.m, segment: r.rb.segment, local: this.rbMarkerLocal(r.rb, r.m) });
+      return out;
+    }
+    primaryPlacement(name) {
+      const pl = this.markerPlacements(name); if (!pl.length) return null;
+      return pl.find(p => p.kind === 'target' && p.t.name === name + '_' + p.segment) || pl[0];
+    }
+    markerWorld(name, W) {
+      const p = this.primaryPlacement(name); if (!p) return null;
+      const M = W.get(p.segment); return M ? apply(M, p.local) : null;
+    }
+
+    /* ---------- joint flexibility ---------- */
+    jointStats(segName) {
+      const s = this.segments.get(segName); if (!s || !s.joint) return null;
+      const n = JOINT_DOF[s.jointType] ?? 0; if (!n) return { seg: s, n: 0 };
+      const j = s.joint, g = a => nums(j.getAttribute(a));
+      const C = g('COVARIANCE'), M = g('RANGE-MATRIX'), mean = g('MEAN'), center = g('RANGE-CENTRING-STATE');
+      const dofs = [];
+      for (let i = 0; i < n; i++) dofs.push({ sd: C.length === n * n ? Math.sqrt(C[i * n + i]) : null, half: M.length === n * n ? Math.sqrt(M[i * n + i]) : null, mean: mean[i] ?? null, center: center[i] ?? (mean[i] ?? null) });
+      return { seg: s, n, C, M, mean, center, dofs, pca: this.pcaJoints.get(segName) || null };
+    }
+    dofLabels(segName) {
+      const s = this.segments.get(segName); if (!s) return [];
+      const j = s.joint;
+      const axisName = v => { const a = v.map(Math.abs); const i = a.indexOf(Math.max(...a)); return (v[i] < 0 ? '−' : '') + 'XYZ'[i]; };
+      switch (s.jointType) {
+        case 'JointHinge': return ['回転 ' + axisName(nums(j.getAttribute('AXIS')))];
+        case 'JointHardySpicer': { const a = nums(j.getAttribute('AXIS-PAIR')); return ['回転 ' + axisName(a.slice(0, 3)), '回転 ' + axisName(a.slice(3, 6))]; }
+        case 'JointBall': return ['回転 X', '回転 Y', '回転 Z'];
+        case 'JointFree': return ['回転 X', '回転 Y', '回転 Z', '移動 X', '移動 Y', '移動 Z'];
+      }
+      return [];
+    }
+    /* k: multiplier on the standard deviation of each DOF (covariance → D·C·D) */
+    scaleJoint(segName, k) {
+      const s = this.segments.get(segName); if (!s || !s.joint) return false;
+      const n = JOINT_DOF[s.jointType] ?? 0; if (!n) return false;
+      let touched = false;
+      for (const el of [s.joint, s.jt]) {
+        if (!el) continue;
+        for (const a of COV_ATTRS) {
+          const C = nums(el.getAttribute(a)); if (C.length !== n * n) continue;
+          const out = C.map((v, idx) => v * k[Math.floor(idx / n)] * k[idx % n]);
+          el.setAttribute(a, joinG(out)); touched = true;
+        }
+      }
+      return touched;
+    }
+    shiftJointCenter(segName, d) {
+      const s = this.segments.get(segName); if (!s || !s.joint) return false;
+      const n = JOINT_DOF[s.jointType] ?? 0; if (!n) return false;
+      let touched = false;
+      for (const el of [s.joint, s.jt]) {
+        if (!el) continue;
+        for (const a of CENTER_ATTRS) {
+          const v = nums(el.getAttribute(a)); if (v.length !== n) continue;
+          el.setAttribute(a, joinG(v.map((x, i) => x + (d[i] || 0)))); touched = true;
+        }
+      }
+      return touched;
+    }
+
+    /* ---------- parameter edit ---------- */
+    setParam(name, { value, prior, sd }) {
+      const el = this.params.get(name); if (!el) throw new Error('パラメータ ' + name + ' がありません');
+      if (value != null) el.setAttribute('VALUE', g17(value));
+      if (prior != null && el.hasAttribute('PRIOR')) el.setAttribute('PRIOR', g17(prior));
+      if (sd != null && el.hasAttribute('SD')) el.setAttribute('SD', g17(sd));
+      this.invalidate();
+      return this.syncJoints();
+    }
+    addParameter(name, value, sd, protoEl) {
+      if (this.params.has(name)) throw new Error('パラメータ名 ' + name + ' は既に使われています');
+      const el = this.doc.createElement('Parameter');
+      const proto = protoEl || [...this.params.values()].filter(e => e.tagName === 'Parameter').pop();
+      const attrs = proto ? [...proto.attributes].map(a => a.name) : ['NAME', 'VALUE', 'PRIOR', 'SD', 'HIDDEN'];
+      for (const a of attrs) {
+        if (a === 'NAME') el.setAttribute(a, name);
+        else if (a === 'VALUE' || a === 'PRIOR') el.setAttribute(a, g17(value));
+        else if (a === 'SD') el.setAttribute(a, g17(sd));
+        else el.setAttribute(a, proto.getAttribute(a));
+      }
+      const lastParam = kids(this.paramsEl, 'Parameter').pop() || kids(this.paramsEl).pop();
+      if (lastParam) insertAfter(lastParam, el); else appendChildIndented(this.paramsEl, el);
+      this.params.set(name, el);
+      this.invalidate();
+      return el;
+    }
+
+    /* ---------- marker edits ---------- */
+    setMarkerProps(name, { status, radius, rgb }) {
+      const el = this.markers.get(name); if (!el) return false;
+      if (status) el.setAttribute('STATUS', status);
+      if (radius != null) el.setAttribute('RADIUS', g17(radius));
+      if (rgb) {
+        el.setAttribute('RGB', rgb);
+        for (const t of this.targetsByMarker.get(name) || []) if (t.el.hasAttribute('RGB')) t.el.setAttribute('RGB', rgb);
+        const dark = rgb.split(/\s+/).map(v => Math.round(+v * 0.45)).join(' ');
+        for (const st of this.sticks) { if (st.getAttribute('MARKER1') === name) st.setAttribute('RGB1', dark); if (st.getAttribute('MARKER2') === name) st.setAttribute('RGB2', dark); }
+      }
+      return true;
+    }
+    /* parameters a target component can be moved with: referenced by nothing else */
+    dedicatedParams(t, comp) {
+      const out = [];
+      const v = splitTop(t.el.getAttribute('POSITION'))[comp]; if (v == null || isNumStr(v)) return out;
+      for (const n of compile(v).names) {
+        const el = this.params.get(n); if (!el || el.tagName !== 'Parameter') continue;
+        const refs = this.refs.get(n) || [];
+        if (refs.every(r => r.el === t.el && r.comp === comp)) out.push(n);
+      }
+      return out;
+    }
+    /* move one placement by d (segment-local mm). Returns a list of human-readable actions. */
+    movePlacement(pl, d, { movePrior, allowShared } = {}) {
+      const actions = [];
+      if (pl.kind === 'rigid') {
+        const comps = splitTop(pl.m.el.getAttribute('POSITION'));
+        // rigid-body marker positions are in the rigid body frame (orientation usually zero)
+        const ori = nums(pl.rb.el.getAttribute('ORIENTATION'));
+        const dl = mtv3(rotvec(ori.length === 3 ? ori : [0, 0, 0]), d);
+        for (let i = 0; i < 3; i++) if (dl[i]) this._moveComp(pl.m.el, comps, i, dl[i], movePrior, actions, () => [], allowShared);
+        pl.m.el.setAttribute('POSITION', comps.join(' '));
+      } else {
+        const comps = splitTop(pl.t.el.getAttribute('POSITION'));
+        for (let i = 0; i < 3; i++) if (d[i]) this._moveComp(pl.t.el, comps, i, d[i], movePrior, actions, () => this.dedicatedParams(pl.t, i), allowShared);
+        pl.t.el.setAttribute('POSITION', comps.join(' '));
+      }
+      this.invalidate();
+      return actions;
+    }
+    _moveComp(el, comps, i, delta, movePrior, actions, dedicated, allowShared) {
+      const c = comps[i]; const axis = 'XYZ'[i];
+      if (isNumStr(c)) { comps[i] = g17(parseFloat(c) + delta); actions.push(`${axis}: 数値 ${c} → ${comps[i]}`); return; }
+      const ded = dedicated();
+      const names = compile(c).names;
+      let cand = ded.length ? ded : (names.length === 1 && this.params.get(names[0])?.tagName === 'Parameter' && (this.refs.get(names[0]) || []).every(r => r.el === el) ? names : []);
+      let shared = false;
+      if (!cand.length && allowShared) { cand = names.filter(n => this.params.get(n)?.tagName === 'Parameter'); shared = cand.length > 0; }
+      for (const p of cand) {
+        const ast = compile(c).ast; const v0 = this.pval(p); const h = Math.max(1e-3, Math.abs(v0) * 1e-6);
+        const f = x => evalAst(ast, n => n === p ? x : this.pval(n));
+        let deriv = (f(v0 + h) - f(v0 - h)) / (2 * h);
+        if (Math.abs(deriv - Math.round(deriv)) < 1e-7) deriv = Math.round(deriv);
+        if (Math.abs(deriv) > 1e-9) {
+          const nv = v0 + delta / deriv; const pel = this.params.get(p);
+          pel.setAttribute('VALUE', g17(nv));
+          if (movePrior && pel.hasAttribute('PRIOR')) pel.setAttribute('PRIOR', g17(parseFloat(pel.getAttribute('PRIOR')) + delta / deriv));
+          this.invalidate();
+          const others = shared ? [...new Set((this.refs.get(p) || []).filter(r => r.el !== el).map(r => r.owner.marker || r.owner.name))] : [];
+          actions.push(`${axis}: パラメータ ${p} を ${fmt(v0)} → ${fmt(nv)}` + (others.length ? `（共有先 ${others.join('・')} も動きます）` : ''));
+          return;
+        }
+      }
+      // fall back: append a constant offset to the expression
+      const m = /^\((.*)\)\+\(([-+0-9.eE]+)\)$/.exec(c);
+      if (m && isNumStr(m[2])) { const nv = parseFloat(m[2]) + delta; comps[i] = Math.abs(nv) < 1e-12 ? m[1] : `(${m[1]})+(${g17(nv)})`; }
+      else comps[i] = `(${c})+(${g17(delta)})`;
+      actions.push(`${axis}: 共有パラメータの式なので定数オフセット ${fmt(delta)} mm を追加`);
+    }
+    deleteMarker(name, { removeParams } = {}) {
+      const el = this.markers.get(name); if (!el) return null;
+      const removed = { targets: 0, sticks: 0, params: [] };
+      const ownParams = new Set();
+      for (const t of this.targetsByMarker.get(name) || []) {
+        for (const comp of [0, 1, 2]) for (const p of this.dedicatedParams(t, comp)) ownParams.add(p);
+        removeEl(t.el); removed.targets++;
+      }
+      const rbm = this.rbByMarker.get(name); if (rbm) { removeEl(rbm.m.el); removed.targets++; }
+      for (const st of [...this.sticks]) if (st.getAttribute('MARKER1') === name || st.getAttribute('MARKER2') === name) { removeEl(st); removed.sticks++; }
+      removeEl(el);
+      if (removeParams) for (const p of ownParams) { removeEl(this.params.get(p)); removed.params.push(p); }
+      this.reindex();
+      return removed;
+    }
+    addStick(a, b) {
+      if (!this.sticksEl || !this.markers.has(a) || !this.markers.has(b) || a === b) return false;
+      if (this.sticks.some(s => (s.getAttribute('MARKER1') === a && s.getAttribute('MARKER2') === b) || (s.getAttribute('MARKER1') === b && s.getAttribute('MARKER2') === a))) return false;
+      const el = this.doc.createElement('Stick');
+      el.setAttribute('MARKER1', a); el.setAttribute('MARKER2', b);
+      // reuse the stick colour already used with markers of the same colour (Shogun draws sticks darker)
+      const stickColor = m => {
+        const rgb = this.markers.get(m).getAttribute('RGB') || '255 255 255';
+        for (const s of this.sticks) for (const [mk, ck] of [['MARKER1', 'RGB1'], ['MARKER2', 'RGB2']]) { const o = this.markers.get(s.getAttribute(mk)); if (o && o.getAttribute('RGB') === rgb && s.getAttribute(ck)) return s.getAttribute(ck); }
+        return rgb.split(/\s+/).map(v => Math.round(+v * 0.45)).join(' ');
+      };
+      el.setAttribute('RGB1', stickColor(a)); el.setAttribute('RGB2', stickColor(b));
+      appendChildIndented(this.sticksEl, el); this.reindex(); return true;
+    }
+    removeStick(a, b) {
+      const st = this.sticks.find(s => (s.getAttribute('MARKER1') === a && s.getAttribute('MARKER2') === b) || (s.getAttribute('MARKER1') === b && s.getAttribute('MARKER2') === a));
+      if (!st) return false; removeEl(st); this.reindex(); return true;
+    }
+    /* add a marker + target (+ optional offset parameters) */
+    addMarker({ name, segment, local, status, radius, rgb, parametrize, proto, sd }) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error('マーカー名は英数字と _ で入力してください');
+      if (this.markers.has(name)) throw new Error('マーカー ' + name + ' は既にあります');
+      if (!this.segments.has(segment)) throw new Error('セグメント ' + segment + ' がありません');
+      if (!this.markersEl || !this.targetsEl) throw new Error('このファイルには MarkerSet / TargetSet がありません');
+      const protoMarker = (proto && this.markers.get(proto)) || [...this.markers.values()][0];
+      const mk = this.doc.createElement('Marker');
+      const mAttrs = protoMarker ? [...protoMarker.attributes].map(a => a.name) : ['NAME', 'RADIUS', 'RGB', 'STATUS', 'VIEW-ANGLE'];
+      for (const a of mAttrs) mk.setAttribute(a, a === 'NAME' ? name : a === 'RADIUS' ? g17(radius) : a === 'RGB' ? rgb : a === 'STATUS' ? status : protoMarker.getAttribute(a));
+      appendChildIndented(this.markersEl, mk);
+      // target prototype: same marker's target in proto, else a target on the same segment, else the first
+      const pt = (proto && (this.targetsByMarker.get(proto) || [])[0]) || this.targets.find(t => t.segment === segment) || this.targets[0];
+      let pos;
+      const created = [];
+      if (parametrize) {
+        const names = ['X', 'Y', 'Z'].map(a => `${name}_${segment}_${a}`);
+        names.forEach((n, i) => { this.addParameter(n, local[i], sd ?? 1); created.push(n); });
+        pos = names.join(' ');
+      } else pos = local.map(g17).join(' ');
+      let tEl;
+      if (pt) {
+        tEl = pt.el.cloneNode(true);
+        tEl.setAttribute('NAME', `${name}_${segment}`); tEl.setAttribute('MARKER', name); tEl.setAttribute('SEGMENT', segment);
+        tEl.setAttribute('POSITION', pos); if (tEl.hasAttribute('RGB')) tEl.setAttribute('RGB', rgb);
+        insertAfter(this.targets[this.targets.length - 1].el, tEl);
+      } else {
+        tEl = this.doc.createElement('TargetLocalPointToWorldPoint');
+        for (const [a, v] of [['FILL-GAPS', 'true'], ['GAUSSIAN', 'false'], ['HIDDEN', 'false'], ['NAME', `${name}_${segment}`], ['MARKER', name], ['OPACITY', '255'], ['POSITION', pos], ['CALIBRATION-WEIGHT', '1'], ['RGB', rgb], ['SEGMENT', segment], ['WEIGHT', '1'], ['DRAW-STYLE', 'None']]) tEl.setAttribute(a, v);
+        appendChildIndented(this.targetsEl, tEl);
+      }
+      this.reindex();
+      return { target: `${name}_${segment}`, params: created, proto: pt ? pt.name : null };
+    }
+
+    /* ---------- validation ---------- */
+    validate() {
+      const issues = []; const add = (level, msg) => issues.push({ level, msg });
+      const seen = new Set();
+      const checkVec = (el, attr, label) => {
+        const v = el.getAttribute(attr); if (v == null) return;
+        for (const c of splitTop(v)) {
+          if (isNumStr(c)) continue;
+          const cc = compile(c);
+          if (cc.err) { add('error', `${label} ${attr}: ${cc.err}`); continue; }
+          for (const n of cc.names) if (!this.params.has(n)) { const k = label + n; if (!seen.has(k)) { seen.add(k); add('error', `${label} の ${attr} が存在しないパラメータ ${n} を参照しています`); } }
+        }
+        if (this.evalVec(v).some(x => !isFinite(x))) add('error', `${label} の ${attr} を計算できません`);
+      };
+      for (const s of this.segList) if (s.jt) for (const a of POSE_ATTRS) checkVec(s.jt, a, `セグメント ${s.name}`);
+      for (const t of this.targets) {
+        checkVec(t.el, 'POSITION', `ターゲット ${t.name}`);
+        if (!this.markers.has(t.marker)) add('error', `ターゲット ${t.name} のマーカー ${t.marker} が MarkerSet にありません`);
+        if (!this.segments.has(t.segment)) add('error', `ターゲット ${t.name} のセグメント ${t.segment} がありません`);
+      }
+      for (const st of this.sticks) for (const a of ['MARKER1', 'MARKER2']) if (!this.markers.has(st.getAttribute(a))) add('error', `スティック ${st.getAttribute('MARKER1')}–${st.getAttribute('MARKER2')} のマーカー ${st.getAttribute(a)} がありません`);
+      for (const m of this.markers.keys()) if (!this.targetsByMarker.has(m) && !this.rbByMarker.has(m)) add('warn', `マーカー ${m} にターゲットがありません（位置が決まりません）`);
+      const dup = (arr, label) => { const c = new Map(); for (const x of arr) c.set(x, (c.get(x) || 0) + 1); for (const [k, v] of c) if (v > 1) add('error', `${label} ${k} が ${v} 個あります`); };
+      dup(kids(this.markersEl || this.root, 'Marker').map(e => e.getAttribute('NAME')), 'マーカー名');
+      dup(this.paramsEl ? kids(this.paramsEl).map(e => e.getAttribute('NAME')) : [], 'パラメータ名');
+      dup(this.targets.map(t => t.name), 'ターゲット名');
+      for (const s of this.segList) {
+        const st = this.jointStats(s.name); if (!st || !st.n) continue;
+        if (st.C.length && st.C.length !== st.n * st.n) add('error', `${s.name} の COVARIANCE の要素数が自由度と合いません`);
+        if (st.dofs.some(d => d.sd != null && !(d.sd > 0))) add('warn', `${s.name} の COVARIANCE に 0 以下の分散があります`);
+      }
+      return issues;
+    }
+  }
+  function fmt(x, d = 2) { if (x == null || !isFinite(x)) return '—'; const a = Math.abs(x); return (a !== 0 && (a < 0.01 || a >= 1e5)) ? x.toExponential(2) : x.toFixed(d); }
+
+  /* ---------- semantic diff against the original text ---------- */
+  function snapshotOf(model) {
+    const snap = { params: new Map(), segments: new Map(), markers: new Map(), sticks: new Set(), targets: new Map() };
+    const attrs = el => { const o = {}; for (const a of el.attributes) o[a.name] = a.value; return o; };
+    for (const [n, el] of model.params) snap.params.set(n, attrs(el));
+    for (const s of model.segList) snap.segments.set(s.name, { seg: attrs(s.el), joint: s.joint ? attrs(s.joint) : {}, jt: s.jt ? attrs(s.jt) : {} });
+    for (const [n, el] of model.markers) snap.markers.set(n, attrs(el));
+    for (const st of model.sticks) snap.sticks.add([st.getAttribute('MARKER1'), st.getAttribute('MARKER2')].sort().join('–'));
+    for (const t of model.targets) snap.targets.set(t.name, { ...attrs(t.el), _children: kids(t.el).map(c => JSON.stringify(attrs(c))).join('|') });
+    for (const rb of model.rigidBodies) for (const m of rb.markers) snap.targets.set(rb.name + '/' + m.marker, attrs(m.el));
+    return snap;
+  }
+  const sameNumList = (a, b) => {
+    if (a === b) return true; const x = nums(a), y = nums(b);
+    if (x.length !== y.length || x.some(isNaN) || y.some(isNaN)) return false;
+    return x.every((v, i) => v === y[i]);
+  };
+  function diff(origModel, curModel) {
+    const A = origModel._snap || (origModel._snap = snapshotOf(origModel)), B = snapshotOf(curModel);
+    const res = { params: [], paramsAdded: [], paramsRemoved: [], joints: [], jointPose: 0, markers: [], markersAdded: [], markersRemoved: [], sticksAdded: [], sticksRemoved: [], targets: [], targetsAdded: [], targetsRemoved: [] };
+    const cmp = (a, b, skip = []) => { const ch = []; for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) { if (skip.includes(k)) continue; if (a[k] !== b[k] && !sameNumList(a[k], b[k])) ch.push(k); } return ch; };
+    for (const [n, a] of A.params) { const b = B.params.get(n); if (!b) res.paramsRemoved.push(n); else { const ch = cmp(a, b); if (ch.length) res.params.push({ name: n, ch, from: a, to: b }); } }
+    for (const n of B.params.keys()) if (!A.params.has(n)) res.paramsAdded.push(n);
+    for (const [n, a] of A.segments) {
+      const b = B.segments.get(n); if (!b) continue;
+      const jch = cmp(a.joint, b.joint).concat(cmp(a.jt, b.jt).map(k => 'JointTemplate.' + k));
+      const pose = jch.filter(k => POSE_ATTRS.includes(k)); const other = jch.filter(k => !POSE_ATTRS.includes(k));
+      if (pose.length) res.jointPose++;
+      if (other.length) res.joints.push({ name: n, ch: other });
+    }
+    for (const [n, a] of A.markers) { const b = B.markers.get(n); if (!b) res.markersRemoved.push(n); else { const ch = cmp(a, b); if (ch.length) res.markers.push({ name: n, ch, from: a, to: b }); } }
+    for (const n of B.markers.keys()) if (!A.markers.has(n)) res.markersAdded.push(n);
+    for (const s of A.sticks) if (!B.sticks.has(s)) res.sticksRemoved.push(s);
+    for (const s of B.sticks) if (!A.sticks.has(s)) res.sticksAdded.push(s);
+    for (const [n, a] of A.targets) { const b = B.targets.get(n); if (!b) res.targetsRemoved.push(n); else { const ch = cmp(a, b); if (ch.length) res.targets.push({ name: n, ch, from: a, to: b }); } }
+    for (const n of B.targets.keys()) if (!A.targets.has(n)) res.targetsAdded.push(n);
+    res.total = res.params.length + res.paramsAdded.length + res.paramsRemoved.length + res.joints.length + res.markers.length + res.markersAdded.length + res.markersRemoved.length + res.sticksAdded.length + res.sticksRemoved.length + res.targets.length + res.targetsAdded.length + res.targetsRemoved.length;
+    return res;
+  }
+
+  return { Model, g17, nums, splitTop, compile, evalAst, isNumStr, fmt, diff, JOINT_DOF, apply, invApply, mv3, mtv3, rotvec, compose, tf, ID };
+})();
+if (typeof window !== 'undefined') window.KM = KM;
+/* Built-in demo: a small fictional body model in the same KinematicModel format (not Vicon data). */
+'use strict';
+const DEMO = (() => {
+  const L = '231 101 0', R = '46 120 252', C = '255 255 0', W = '255 255 255';
+  // [name, parent, joint, posExpr, oriExpr, extra]
+  const segs = [
+    ['Hips', null, 'Free', '0 0 0', '0 0 0'],
+    ['Spine', 'Hips', 'Ball', '0 0 SpineLength', '0 0 0'],
+    ['Head', 'Spine', 'Ball', '0 0 NeckLength', '0 0 0'],
+    ['HeadEnd', 'Head', 'Dummy', '0 0 HeadLength', '0 0 0'],
+  ];
+  for (const [S, sg] of [['Left', -1], ['Right', 1]]) {
+    segs.push(
+      [S + 'Shoulder', 'Spine', 'Ball', `0 ChestThickness ChestHeight`, `0 ${sg * 1.570796} 0`],
+      [S + 'Arm', S + 'Shoulder', 'Ball', '0 0 ClavLength', '0 0 0'],
+      [S + 'ForeArm', S + 'Arm', 'HardySpicer', '0 0 UpperArmLength', '0 0 0'],
+      [S + 'Hand', S + 'ForeArm', 'HardySpicer', '0 0 LowerArmLength', '0 0 0'],
+      [S + 'HandEnd', S + 'Hand', 'Dummy', '0 0 HandLength', '0 0 0'],
+      [S + 'UpLeg', 'Hips', 'Ball', `${sg < 0 ? '-' : ''}HipWidth 0 0`, '0 0 0'],
+      [S + 'Leg', S + 'UpLeg', 'Hinge', '0 0 -UpperLegLength', '0 0 0'],
+      [S + 'Foot', S + 'Leg', 'Ball', '0 0 -LowerLegLength', '-0.261799 0 0'],
+      [S + 'ToeBase', S + 'Foot', 'Hinge', '0 FootLength 0', '0.261799 0 0'],
+      [S + 'ToeEnd', S + 'ToeBase', 'Dummy', '0 ToeLength 0', '0 0 0'],
+    );
+  }
+  const body = { SpineLength: 380, NeckLength: 145, HeadLength: 190, ChestThickness: -15, ChestHeight: 300, ClavLength: 165, UpperArmLength: 285, LowerArmLength: 245, HandLength: 160,
+    HipWidth: 95, UpperLegLength: 430, LowerLegLength: 415, FootLength: 135, ToeLength: 55, HeadWidth: 75 };
+  // markers: [name, segment, [x,y,z] or expression, rgb]
+  const mk = [
+    ['LFHD', 'Head', '-HeadWidth LFHD_Head_Y LFHD_Head_Z', L], ['RFHD', 'Head', 'HeadWidth RFHD_Head_Y RFHD_Head_Z', R],
+    ['LBHD', 'Head', '-HeadWidth LBHD_Head_Y LBHD_Head_Z', L], ['RBHD', 'Head', 'HeadWidth RBHD_Head_Y RBHD_Head_Z', R],
+    ['C7', 'Spine', [0, -95, 355], C], ['CLAV', 'Spine', [0, 70, 330], C], ['STRN', 'Spine', [0, 105, 170], C], ['T10', 'Spine', [0, -110, 120], C],
+    ['LFWT', 'Hips', [-110, 70, 40], L], ['RFWT', 'Hips', [110, 70, 40], R], ['LBWT', 'Hips', [-80, -100, 60], L], ['RBWT', 'Hips', [80, -100, 60], R],
+  ];
+  for (const [S, sg, col] of [['Left', -1, L], ['Right', 1, R]]) {
+    const P = S[0];
+    mk.push(
+      [P + 'SHO', S + 'Arm', [0, 0, 20], col], [P + 'UPA', S + 'Arm', [0, -45, 150], col], [P + 'ELB', S + 'ForeArm', [0, -40, 0], col],
+      [P + 'IWR', S + 'Hand', `0 WristWidth 0`, col], [P + 'OWR', S + 'Hand', `0 -WristWidth 0`, col], [P + 'FIN', S + 'Hand', [0, 0, 120], col],
+      [P + 'THI', S + 'UpLeg', [sg * 70, 20, -220], col], [P + 'KNE', S + 'Leg', [sg * 50, 0, 0], col], [P + 'SHN', S + 'Leg', [sg * 20, 55, -200], col],
+      [P + 'ANK', S + 'Foot', [sg * 40, 0, 0], col], [P + 'HEE', S + 'Foot', [0, -55, -45], col], [P + 'TOE', S + 'ToeBase', [0, 10, 25], col],
+    );
+  }
+  body.WristWidth = 32;
+  const sticks = [['LFHD', 'RFHD'], ['LBHD', 'RBHD'], ['LFHD', 'LBHD'], ['RFHD', 'RBHD'], ['C7', 'CLAV'], ['CLAV', 'STRN'], ['C7', 'T10'], ['LFWT', 'RFWT'], ['LBWT', 'RBWT'], ['LFWT', 'LBWT'], ['RFWT', 'RBWT']];
+  for (const P of ['L', 'R']) sticks.push([P + 'SHO', P + 'UPA'], [P + 'UPA', P + 'ELB'], [P + 'ELB', P + 'IWR'], [P + 'ELB', P + 'OWR'], [P + 'IWR', P + 'OWR'], [P + 'IWR', P + 'FIN'], [P + 'THI', P + 'KNE'], [P + 'KNE', P + 'SHN'], [P + 'SHN', P + 'ANK'], [P + 'ANK', P + 'HEE'], [P + 'HEE', P + 'TOE'], [P + 'ANK', P + 'TOE']);
+
+  const dof = { Free: 6, Ball: 3, HardySpicer: 2, Hinge: 1, Dummy: 0 };
+  const rangeK = { Ball: 5, HardySpicer: 4, Hinge: 3 };
+  const statsFor = (name, type) => {
+    const n = dof[type];
+    if (type === 'Free') return { mean: [0, 0, 0, 0, 0, 0], cov: [10, 10, 10, 1e8, 1e8, 1e8] };
+    const base = /Leg$/.test(name) ? 0.55 : /ForeArm|Hand/.test(name) ? 0.8 : /Head/.test(name) ? 0.35 : /Spine/.test(name) ? 0.18 : 0.45;
+    const mean = new Array(n).fill(0); if (/Leg$/.test(name) && type === 'Hinge') mean[0] = 0.35; if (/ForeArm/.test(name)) mean[0] = -0.6;
+    return { mean, cov: new Array(n).fill(0).map((_, i) => base * (1 - 0.15 * i)) };
+  };
+  const diag = (v) => { const n = v.length, o = []; for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) o.push(i === j ? v[i] : 0); return o.join(' '); };
+  const t = (n) => '\t'.repeat(n);
+
+  function build(kind, scale) {
+    const solving = kind === 'solving';
+    const NL = '\r\n'; const out = [];
+    out.push('<?xml version="1.0" encoding="UTF-8" standalone="no"?>');
+    out.push('<KinematicModel MODEL="DemoBody:Example" VERSION="3.7" MODEL-VERSION="38">');
+    out.push(t(1) + '<Parameters>');
+    out.push(t(2) + '<StaticParameter NAME="DemoVersion" VALUE="1" PRIOR="1" HIDDEN="true" ADVANCED="true" READONLY="true" REQUIRED="true" QUANTITY="scalar"/>');
+    for (const [k, v] of Object.entries(body)) { const x = +(v * scale).toFixed(3); out.push(t(2) + `<Parameter NAME="${k}" VALUE="${x}" PRIOR="${x}" SD="${/Length|Height/.test(k) ? 5 : 2}" HIDDEN="false"/>`); }
+    for (const [name, seg, pos] of mk) {
+      if (Array.isArray(pos)) ['X', 'Y', 'Z'].forEach((a, i) => { const x = +(pos[i] * scale).toFixed(3); out.push(t(2) + `<Parameter NAME="${name}_${seg}_${a}" VALUE="${x}" PRIOR="${x}" SD="1" HIDDEN="false"/>`); });
+      else for (const id of pos.split(' ')) if (/_[XYZ]$/.test(id) && id.startsWith(name)) { const v = id.endsWith('_Y') ? (name[1] === 'F' ? 60 : -95) : 95; out.push(t(2) + `<Parameter NAME="${id}" VALUE="${v * scale}" PRIOR="${v * scale}" SD="1" HIDDEN="false"/>`); }
+    }
+    out.push(t(1) + '</Parameters>');
+    out.push(t(1) + '<Skeleton>');
+    const childrenOf = p => segs.filter(s => s[1] === p);
+    const emit = (s, depth) => {
+      const [name, , type, pos, ori] = s; const n = dof[type];
+      const side = /^Left/.test(name) ? L : /^Right/.test(name) ? R : '204 230 255';
+      out.push(t(depth) + `<Segment NAME="${name}" OPACITY="127" BOUNDS="0 0 0 0 0 0" RGB="${side}" HIDDEN="false" DRAW-END-RATIO="1" DRAW-HEIGHT="0.5" DRAW-TWIST="0" DRAW-WIDTH="0.5" DRAW-STYLE="${solving ? 'tetra-stripe' : 'box'}" DRAW-SHADING="shaded-smooth">`);
+      const numeric = v => v.split(' ').every(x => /^-?\d+(\.\d+)?$/.test(x));
+      let ja = `PRE-ORIENTATION="${numeric(ori) ? ori : '0 0 0'}" PRE-POSITION="${numeric(pos) ? pos : '0 0 0'}" INVERSE-POST-ORIENTATION="0 0 0" INVERSE-POST-POSITION="0 0 0"`;
+      let ta = `PRE-ORIENTATION="${ori}" PRE-POSITION="${pos}" INVERSE-POST-ORIENTATION="0 0 0" INVERSE-POST-POSITION="0 0 0"`;
+      if (n) {
+        const st = statsFor(name, type); const cov = diag(st.cov);
+        const stat = ` MEAN="${st.mean.join(' ')}" COVARIANCE="${cov}" T="${new Array(n).fill('*').join(' ')}"` + (rangeK[type] ? ` RANGE-CENTRING-STATE="${st.mean.join(' ')}" RANGE-MATRIX="${diag(st.cov.map(c => c * rangeK[type]))}"` : '');
+        ja += stat; ta = `MEAN="${st.mean.join(' ')}" COVARIANCE="${cov}" ` + ta + (rangeK[type] ? ` RANGE-CENTRING-STATE="${st.mean.join(' ')}" RANGE-MATRIX="${diag(st.cov.map(c => c * rangeK[type]))}"` : '');
+        if (type === 'Hinge') ja += ' AXIS="1 0 0"';
+        if (type === 'HardySpicer') ja += ' AXIS-PAIR="1 0 0 0 1 0"';
+        if (type === 'Ball' || type === 'Free') ja += ' EULER-ORDER="XYZ"';
+      }
+      out.push(t(depth + 1) + `<Joint${type} ${ja}>`);
+      out.push(t(depth + 2) + `<JointTemplate ${ta}/>`);
+      out.push(t(depth + 1) + `</Joint${type}>`);
+      for (const c of childrenOf(name)) emit(c, depth + 1);
+      out.push(t(depth) + '</Segment>');
+    };
+    for (const r of childrenOf(null)) emit(r, 2);
+    out.push(t(1) + '</Skeleton>');
+    out.push(t(1) + '<MarkerSet>');
+    out.push(t(2) + '<Markers>');
+    for (const [name, , , rgb] of mk) out.push(t(3) + `<Marker NAME="${name}" RADIUS="7" RGB="${rgb}" STATUS="${/SHN|THI|UPA/.test(name) ? 'optional' : 'required'}" VIEW-ANGLE="0"/>`);
+    out.push(t(2) + '</Markers>');
+    out.push(t(2) + '<Sticks>');
+    const col = n => mk.find(m => m[0] === n)[3].split(' ').map(v => Math.round(v * 0.45)).join(' ');
+    for (const [a, b] of sticks) out.push(t(3) + `<Stick MARKER1="${a}" MARKER2="${b}" RGB1="${col(a)}" RGB2="${col(b)}"/>`);
+    out.push(t(2) + '</Sticks>');
+    out.push(t(1) + '</MarkerSet>');
+    out.push(t(1) + '<TargetSet>');
+    out.push(t(2) + '<Targets>');
+    for (const [name, seg, pos, rgb] of mk) {
+      const p = Array.isArray(pos) ? `${name}_${seg}_X ${name}_${seg}_Y ${name}_${seg}_Z` : pos;
+      if (solving) {
+        out.push(t(3) + `<TargetLocalPointToWorldPoint FILL-GAPS="true" GAUSSIAN="false" HIDDEN="false" NAME="${name}_${seg}" MARKER="${name}" OPACITY="255" POSITION="${p}" CALIBRATION-WEIGHT="1" RGB="${rgb}" SEGMENT="${seg}" WEIGHT="1" DRAW-STYLE="None">`);
+        out.push(t(4) + '<TargetLocalPointToWorldPointTemplate/>');
+      } else {
+        out.push(t(3) + `<TargetLocalPointToWorldPoint COVARIANCE="1 0 0 0 1 0 0 0 1" PLACEMENT-COVARIANCE="150 0 0 0 150 0 0 0 150" FILL-GAPS="false" GAUSSIAN="true" HIDDEN="false" NAME="${name}_${seg}" MARKER="${name}" OPACITY="255" POSITION="${p}" CALIBRATION-WEIGHT="1" RGB="${rgb}" SEGMENT="${seg}" WEIGHT="1" DRAW-STYLE="None">`);
+        out.push(t(4) + '<TargetLocalPointToWorldPointTemplate COVARIANCE="150 0 0 0 150 0 0 0 150"/>');
+      }
+      out.push(t(3) + '</TargetLocalPointToWorldPoint>');
+    }
+    out.push(t(2) + '</Targets>');
+    out.push(t(1) + '</TargetSet>');
+    out.push(t(1) + (solving ? '<Skin NAME="DemoSkin" RGB1="45 86 163" RGB2="255 255 255"/>' : '<Skin/>'));
+    out.push('</KinematicModel>');
+    // fill the evaluated joint values with the engine
+    const m = new KM.Model(solving ? 'Demo.vss' : 'Demo.vsk', out.join(NL) + NL);
+    m.syncJoints();
+    return m.serialize();
+  }
+  return { labeling: () => build('labeling', 1), solving: () => build('solving', 1.02) };
+})();
+/* Canvas 3D viewer: Z-up, perspective, orbit / pan / zoom, picking */
+'use strict';
+class Viewer {
+  constructor(canvas, opts) {
+    this.cv = canvas; this.ctx = canvas.getContext('2d');
+    this.yaw = 0.35; this.pitch = 0.12; this.dist = 3600; this.target = [0, 0, -100];
+    this.scene = null; this.onPick = opts.onPick; this.onHover = opts.onHover; this.colors = opts.colors;
+    this.labels = true; this.showSticks = true;
+    this.pointers = new Map(); this.drag = null;
+    const ro = new ResizeObserver(() => this.resize()); ro.observe(canvas.parentElement);
+    canvas.addEventListener('pointerdown', e => this.down(e));
+    canvas.addEventListener('pointermove', e => this.move(e));
+    canvas.addEventListener('pointerup', e => this.up(e));
+    canvas.addEventListener('pointercancel', e => this.up(e));
+    canvas.addEventListener('pointerleave', () => { if (!this.drag) this.onHover(null); });
+    canvas.addEventListener('wheel', e => { e.preventDefault(); this.dist = Math.min(30000, Math.max(80, this.dist * Math.exp(e.deltaY * 0.0012))); this.draw(); }, { passive: false });
+    canvas.addEventListener('dblclick', e => { const h = this.pick(e.offsetX, e.offsetY); if (h && h.p) { this.target = h.p.slice(); this.dist = Math.min(this.dist, h.kind === 'marker' ? 700 : 1400); this.draw(); } });
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+    this.resize();
+  }
+  resize() {
+    const r = this.cv.parentElement.getBoundingClientRect(); const dpr = window.devicePixelRatio || 1;
+    this.w = Math.max(10, r.width); this.h = Math.max(10, r.height);
+    this.cv.width = Math.round(this.w * dpr); this.cv.height = Math.round(this.h * dpr);
+    this.cv.style.width = this.w + 'px'; this.cv.style.height = this.h + 'px';
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0); this.draw();
+  }
+  view(name) {
+    const v = { front: [0, 0.05], side: [Math.PI / 2, 0.05], back: [Math.PI, 0.05], top: [0, 1.45], persp: [0.35, 0.12] }[name];
+    if (v) { this.yaw = v[0]; this.pitch = v[1]; }
+    this.draw();
+  }
+  frame(points) {
+    if (!points.length) return;
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (const p of points) for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], p[i]); hi[i] = Math.max(hi[i], p[i]); }
+    this.target = lo.map((v, i) => (v + hi[i]) / 2);
+    const size = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], 50);
+    this.dist = size * 1.9 + 200; this.draw();
+  }
+  basis() {
+    const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch), cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
+    const dir = [cp * sy, cp * cy, sp]; // from target to eye (front = +Y)
+    const eye = this.target.map((t, i) => t + dir[i] * this.dist);
+    const f = dir.map(v => -v);
+    let r = [f[1] * 1 - f[2] * 0, f[2] * 0 - f[0] * 1, 0]; const rn = Math.hypot(...r) || 1; r = r.map(v => v / rn);
+    const u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
+    return { eye, f, r, u, focal: Math.min(this.w, this.h) * 1.35 };
+  }
+  proj(p, B) {
+    const v = [p[0] - B.eye[0], p[1] - B.eye[1], p[2] - B.eye[2]];
+    const z = v[0] * B.f[0] + v[1] * B.f[1] + v[2] * B.f[2];
+    if (z < 10) return null;
+    const x = v[0] * B.r[0] + v[1] * B.r[1] + v[2] * B.r[2], y = v[0] * B.u[0] + v[1] * B.u[1] + v[2] * B.u[2];
+    return { x: this.w / 2 + x * B.focal / z, y: this.h / 2 - y * B.focal / z, z, s: B.focal / z };
+  }
+  setScene(s) { this.scene = s; this.draw(); }
+  draw() {
+    const c = this.ctx, C = this.colors(); if (!c) return;
+    c.clearRect(0, 0, this.w, this.h);
+    c.fillStyle = C.vpBg; c.fillRect(0, 0, this.w, this.h);
+    const B = this.basis(); this.B = B;
+    // floor grid at the lowest point
+    const S = this.scene; if (!S) return;
+    const gz = S.floorZ ?? -900;
+    c.strokeStyle = C.grid; c.lineWidth = 1;
+    for (let i = -10; i <= 10; i++) {
+      const a = this.proj([i * 200, -2000, gz], B), b = this.proj([i * 200, 2000, gz], B);
+      if (a && b) { c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke(); }
+      const d = this.proj([-2000, i * 200, gz], B), e = this.proj([2000, i * 200, gz], B);
+      if (d && e) { c.beginPath(); c.moveTo(d.x, d.y); c.lineTo(e.x, e.y); c.stroke(); }
+    }
+    const items = [];
+    const P = p => this.proj(p, B);
+    for (const g of S.ghosts || []) for (const bn of g.bones) { const a = P(bn.a), b = P(bn.b); if (a && b) items.push({ z: (a.z + b.z) / 2 + 1, k: 'gbone', a, b, color: g.color, dash: g.dash, w: g.width || 1.5 }); }
+    for (const g of S.ghosts || []) for (const m of g.markers || []) { const a = P(m.p); if (a) items.push({ z: m.label ? -1e9 : a.z + 1, k: 'gmark', a, color: g.color, r: Math.max(2.5, 7 * a.s), label: m.label }); }
+    for (const bn of S.bones) { const a = P(bn.a), b = P(bn.b); if (a && b) items.push({ z: (a.z + b.z) / 2, k: 'bone', a, b, bn }); }
+    for (const j of S.joints) { const a = P(j.p); if (a) items.push({ z: a.z - 0.5, k: 'joint', a, j }); }
+    if (this.showSticks) for (const st of S.sticks) { const a = P(st.a), b = P(st.b); if (a && b) items.push({ z: (a.z + b.z) / 2 + 0.5, k: 'stick', a, b, st }); }
+    for (const m of S.markers) { const a = P(m.p); if (a) items.push({ z: a.z - 1, k: 'marker', a, m }); }
+    items.sort((x, y) => y.z - x.z);
+    this.drawn = [];
+    for (const it of items) {
+      if (it.k === 'gbone') { c.strokeStyle = it.color; c.lineWidth = it.w; c.setLineDash(it.dash ? [5, 4] : []); c.beginPath(); c.moveTo(it.a.x, it.a.y); c.lineTo(it.b.x, it.b.y); c.stroke(); c.setLineDash([]); }
+      else if (it.k === 'gmark') {
+        c.strokeStyle = it.color; c.lineWidth = 1.5; c.setLineDash([3, 3]); c.beginPath(); c.arc(it.a.x, it.a.y, it.r + (it.label ? 7 : 2), 0, Math.PI * 2); c.stroke(); c.setLineDash([]);
+        if (it.label) { const R = it.r + 12; c.beginPath(); c.moveTo(it.a.x - R, it.a.y); c.lineTo(it.a.x - R + 6, it.a.y); c.moveTo(it.a.x + R - 6, it.a.y); c.lineTo(it.a.x + R, it.a.y); c.moveTo(it.a.x, it.a.y - R); c.lineTo(it.a.x, it.a.y - R + 6); c.moveTo(it.a.x, it.a.y + R - 6); c.lineTo(it.a.x, it.a.y + R); c.stroke();
+          c.font = '600 12px ' + C.mono; c.fillStyle = it.color; c.fillText(it.label, it.a.x + R + 3, it.a.y - 4); }
+      }
+      else if (it.k === 'stick') { c.strokeStyle = it.st.color; c.globalAlpha = 0.75; c.lineWidth = 1.2; c.beginPath(); c.moveTo(it.a.x, it.a.y); c.lineTo(it.b.x, it.b.y); c.stroke(); c.globalAlpha = 1; }
+      else if (it.k === 'bone') {
+        const sel = it.bn.selected;
+        c.strokeStyle = sel ? C.accent : it.bn.side === 'L' ? C.left : it.bn.side === 'R' ? C.right : C.center;
+        c.globalAlpha = it.bn.dim ? 0.35 : 1;
+        c.lineWidth = Math.max(1.5, Math.min(sel ? 7 : 5, (sel ? 22 : 15) * it.a.s)); c.lineCap = 'round';
+        c.beginPath(); c.moveTo(it.a.x, it.a.y); c.lineTo(it.b.x, it.b.y); c.stroke(); c.globalAlpha = 1;
+        this.drawn.push({ kind: 'segment', name: it.bn.seg, a: it.a, b: it.b, p: it.bn.b });
+      } else if (it.k === 'joint') {
+        c.fillStyle = it.j.selected ? C.accent : C.jointFill; c.beginPath(); c.arc(it.a.x, it.a.y, it.j.selected ? 4 : 2.2, 0, Math.PI * 2); c.fill();
+      } else if (it.k === 'marker') {
+        const m = it.m, r = Math.max(3, Math.min(14, m.r * it.a.s));
+        c.globalAlpha = m.dim ? 0.4 : 1;
+        c.fillStyle = m.color; c.beginPath(); c.arc(it.a.x, it.a.y, r, 0, Math.PI * 2); c.fill();
+        c.lineWidth = m.selected ? 2.5 : 1; c.strokeStyle = m.selected ? C.accent : C.markerEdge; c.stroke();
+        if (m.selected) { c.beginPath(); c.arc(it.a.x, it.a.y, r + 5, 0, Math.PI * 2); c.strokeStyle = C.accent; c.lineWidth = 1.5; c.stroke(); }
+        if (m.status === 'optional') { c.fillStyle = C.vpBg; c.beginPath(); c.arc(it.a.x, it.a.y, r * 0.38, 0, Math.PI * 2); c.fill(); }
+        c.globalAlpha = 1;
+        if (this.labels || m.selected) { c.font = (m.selected ? '600 12px ' : '11px ') + C.mono; c.fillStyle = m.selected ? C.vpInk : C.vpMuted; c.fillText(m.name, it.a.x + r + 3, it.a.y - r - 1); }
+        this.drawn.push({ kind: 'marker', name: m.name, a: it.a, r, p: m.p });
+      }
+    }
+    if (S.overlay) { c.font = '12px ' + C.sans; c.fillStyle = C.vpMuted; c.fillText(S.overlay, 12, this.h - 30); }
+  }
+  pick(x, y) {
+    let best = null, bd = Infinity;
+    for (const d of this.drawn || []) {
+      if (d.kind === 'marker') { const dd = Math.hypot(d.a.x - x, d.a.y - y) - d.r; if (dd < 6 && dd - 3 < bd) { bd = dd - 3; best = d; } }
+    }
+    if (best) return best;
+    for (const d of this.drawn || []) {
+      if (d.kind !== 'segment') continue;
+      const vx = d.b.x - d.a.x, vy = d.b.y - d.a.y, L2 = vx * vx + vy * vy || 1;
+      const t = Math.max(0, Math.min(1, ((x - d.a.x) * vx + (y - d.a.y) * vy) / L2));
+      const dd = Math.hypot(d.a.x + t * vx - x, d.a.y + t * vy - y);
+      if (dd < 7 && dd < bd) { bd = dd; best = d; }
+    }
+    return best;
+  }
+  down(e) {
+    this.cv.setPointerCapture(e.pointerId); this.pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+    if (this.pointers.size === 2) { const [a, b] = [...this.pointers.values()]; this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), dist: this.dist }; this.drag = null; return; }
+    this.drag = { x: e.offsetX, y: e.offsetY, sx: e.offsetX, sy: e.offsetY, pan: e.shiftKey || e.button === 1 || e.button === 2, moved: false };
+  }
+  move(e) {
+    if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+    if (this.pinch && this.pointers.size === 2) { const [a, b] = [...this.pointers.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); this.dist = Math.min(30000, Math.max(80, this.pinch.dist * this.pinch.d / Math.max(10, d))); this.draw(); return; }
+    if (!this.drag) { const h = this.pick(e.offsetX, e.offsetY); this.cv.style.cursor = h ? 'pointer' : 'grab'; this.onHover(h, e.offsetX, e.offsetY); return; }
+    const dx = e.offsetX - this.drag.x, dy = e.offsetY - this.drag.y; this.drag.x = e.offsetX; this.drag.y = e.offsetY;
+    if (Math.hypot(e.offsetX - this.drag.sx, e.offsetY - this.drag.sy) > 3) this.drag.moved = true;
+    if (this.drag.pan) {
+      const B = this.basis(); const k = this.dist / B.focal;
+      this.target = this.target.map((t, i) => t - B.r[i] * dx * k + B.u[i] * dy * k);
+    } else { this.yaw -= dx * 0.008; this.pitch = Math.max(-1.5, Math.min(1.5, this.pitch + dy * 0.008)); }
+    this.draw();
+  }
+  up(e) {
+    this.pointers.delete(e.pointerId);
+    if (this.pinch) { if (this.pointers.size < 2) this.pinch = null; this.drag = null; return; }
+    if (this.drag && !this.drag.moved) this.onPick(this.pick(e.offsetX, e.offsetY));
+    this.drag = null;
+  }
+}
+/* VSK・VSS エディタ — application layer */
+'use strict';
+(() => {
+  const $ = (s, r = document) => r.querySelector(s);
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmt = (x, d = 2) => KM.fmt(x, d);
+  const deg = r => r * 180 / Math.PI;
+  const ROLE_LABEL = { labeling: 'ラベリング用', solving: 'ソルビング用' };
+  const ROLE_SHORT = { labeling: 'VSK', solving: 'VSS' };
+  const JOINT_LABEL = { JointFree: 'Free（6自由度）', JointBall: 'Ball（3自由度）', JointHardySpicer: 'HardySpicer（2自由度）', JointHinge: 'Hinge（1自由度）', JointDummy: 'Dummy（固定）' };
+  const GROUPS = [['all', 'すべて'], ['body', '体寸法'], ['marker', 'マーカー位置'], ['finger', '指マーカー'], ['hand', '手の形状'], ['scale', 'スケール'], ['cluster', 'クラスター'], ['static', '固定値']];
+
+  const S = {
+    m: { labeling: null, solving: null }, orig: { labeling: null, solving: null },
+    active: 'labeling', sync: true, demo: false, sel: null, tab: 'skel',
+    hist: [], fut: [], log: [], gesture: null,
+    ui: { segFilter: '', markFilter: '', paramFilter: '', paramGroup: 'all', paramLimit: 150, editStatic: false, adding: null, confirmDelete: null, delParams: false,
+      open: new Set(), previewDof: 0, previewOn: true, linkDofs: false, symmetric: true, lastMove: '', moveShared: false, bulkK: 1, bulkPrior: true },
+  };
+  const A = () => S.m[S.active];
+  const otherRole = r => (r === 'labeling' ? 'solving' : 'labeling');
+  const P = () => S.m[otherRole(S.active)];
+  const syncOn = () => S.sync && !!P();
+
+  /* ---------------- toast ---------------- */
+  let toastT;
+  function toast(msg, isErr) { const t = $('#toast'); t.textContent = msg; t.className = 'toast' + (isErr ? ' err' : ''); t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, isErr ? 6000 : 3200); }
+
+  /* ---------------- history ---------------- */
+  function snapshot() {
+    const o = { log: S.log.slice(), sel: S.sel };
+    for (const r of ['labeling', 'solving']) { const m = S.m[r]; o[r] = m ? { text: m.serialize(), fileName: m.fileName, isTemplate: m.isTemplate } : null; }
+    return o;
+  }
+  function restore(o) {
+    for (const r of ['labeling', 'solving']) {
+      const s = o[r]; if (!s) { S.m[r] = null; continue; }
+      const m = new KM.Model(s.fileName, s.text); m.isTemplate = s.isTemplate; m.role = r; S.m[r] = m;
+    }
+    S.sel = o.sel; if (o.log) S.log = o.log.slice();
+  }
+  function pushHist() { S.hist.push(snapshot()); if (S.hist.length > 40) S.hist.shift(); S.fut = []; }
+  function addLog(text, detail, file) { S.log.push({ text, detail: detail || '', file: file || ROLE_SHORT[S.active], t: new Date() }); }
+  function commit(label, fn) {
+    const snap = snapshot();
+    try {
+      const res = fn();
+      if (res === false) return;
+      S.hist.push(snap); if (S.hist.length > 40) S.hist.shift(); S.fut = [];
+      if (res && res.log) addLog(res.log, res.detail, res.file);
+    } catch (e) { restore(snap); toast(e.message || String(e), true); console.error(e); }
+    render();
+  }
+  function beginGesture(key) { if (S.gesture !== key) { pushHist(); S.gesture = key; } }
+  function endGesture(log, detail, file) { S.gesture = null; if (log) addLog(log, detail, file); render(); }
+  function undo() { if (!S.hist.length) return; S.fut.push(snapshot()); const o = S.hist.pop(); restore(o); S.gesture = null; S.ui.confirmDelete = null; render(); toast('元に戻しました'); }
+  function redo() { if (!S.fut.length) return; S.hist.push(snapshot()); const o = S.fut.pop(); restore(o); S.gesture = null; S.ui.confirmDelete = null; render(); toast('やり直しました'); }
+
+  /* ---------------- loading ---------------- */
+  function setModel(role, name, text) {
+    const m = new KM.Model(name, text); m.role = role;
+    S.m[role] = m; const o = new KM.Model(name, text); o.role = role; S.orig[role] = o;
+    return m;
+  }
+  async function handleFiles(files) {
+    const list = [...files].filter(f => /\.(vsk|vss|vst|xml)$/i.test(f.name));
+    if (!list.length) { toast('.vst / .vsk / .vss ファイルを選んでください', true); return; }
+    const loaded = [];
+    const parsed = [];
+    for (const f of list) {
+      const text = await f.text();
+      try { new KM.Model(f.name, text); parsed.push({ f, text }); }
+      catch (e) { toast(`${f.name}: ${e.message}`, true); }
+    }
+    if (!parsed.length) return;
+    if (S.demo) { S.m = { labeling: null, solving: null }; S.orig = { labeling: null, solving: null }; S.demo = false; $('#demoBand').hidden = true; }
+    for (const { f, text } of parsed) {
+      const role = /\.vss$/i.test(f.name) ? 'solving' : 'labeling';
+      setModel(role, f.name, text); loaded.push(f.name); S.active = role;
+    }
+    let note = '';
+    if (S.m.labeling && S.m.solving) {
+      const same = S.m.labeling.baseName === S.m.solving.baseName;
+      S.sync = same || parsed.length > 1;
+      if (!S.sync) note = '（ペアのファイル名が違うため「ペアにも反映」をオフにしました）';
+    }
+    if (parsed.some(p => !/\.vss$/i.test(p.f.name))) S.active = 'labeling';
+    S.hist = []; S.fut = []; S.log = []; S.sel = null; S.ui.adding = null; S.ui.confirmDelete = null;
+    const many = (A()?.markers.size || 0) > 40; $('#optLabels').checked = !many; viewer.labels = !many;
+    render(); fitView();
+    toast('読み込みました: ' + loaded.join('、') + note);
+  }
+  function loadDemo() {
+    setModel('labeling', 'Demo.vsk', DEMO.labeling()); setModel('solving', 'Demo.vss', DEMO.solving());
+    S.m.labeling.isTemplate = S.orig.labeling.isTemplate = false; S.m.solving.isTemplate = S.orig.solving.isTemplate = false;
+    S.demo = true; S.active = 'labeling'; S.sel = { kind: 'segment', name: 'LeftForeArm' };
+    $('#demoBand').hidden = false;
+  }
+
+  /* ---------------- viewer ---------------- */
+  let colorCache = null;
+  function colors() {
+    if (colorCache) return colorCache;
+    const cs = getComputedStyle(document.documentElement); const v = n => cs.getPropertyValue(n).trim();
+    colorCache = { vpBg: v('--vp-bg'), grid: v('--vp-grid'), accent: v('--accent'), left: v('--left'), right: v('--right'), center: v('--center'), jointFill: v('--vp-joint'), markerEdge: v('--vp-edge'), vpInk: v('--vp-ink'), vpMuted: v('--vp-muted'), mono: v('--mono'), sans: v('--sans') };
+    return colorCache;
+  }
+  const resetColors = () => { colorCache = null; viewer && viewer.draw(); };
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', resetColors);
+  new MutationObserver(resetColors).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  let viewer;
+  const rgbCss = s => { const v = (s || '200 200 200').trim().split(/\s+/).map(Number); return `rgb(${v[0] | 0},${v[1] | 0},${v[2] | 0})`; };
+  const sideOf = n => /^Left/.test(n) ? 'L' : /^Right/.test(n) ? 'R' : 'C';
+  function descendants(seg) { const out = []; const w = s => { for (const c of s.children) { out.push(c); w(c); } }; w(seg); return out; }
+  function previewPoses(m) {
+    if (!S.sel || S.sel.kind !== 'segment' || !S.ui.previewOn) return null;
+    const st = m.jointStats(S.sel.name); if (!st || !st.n || st.seg.jointType === 'JointFree') return null;
+    const i = Math.min(S.ui.previewDof, st.n - 1); const c = st.dofs.map(d => d.center ?? 0);
+    const half = st.dofs[i].half ?? (st.dofs[i].sd != null ? st.dofs[i].sd * 2 : 0.5);
+    const lo = c.slice(), hi = c.slice(); lo[i] -= half; hi[i] += half;
+    return [{ [S.sel.name]: lo }, { [S.sel.name]: hi }, { [S.sel.name]: c }];
+  }
+  function buildScene() {
+    const m = A(); if (!m) return null;
+    const W = m.computeWorld();
+    const selSeg = S.sel && S.sel.kind === 'segment' ? S.sel.name : null;
+    const selMk = S.sel && S.sel.kind === 'marker' ? S.sel.name : null;
+    const bones = [], joints = [], markers = [], sticks = [], ghosts = [];
+    let minZ = Infinity; const pts = [];
+    for (const s of m.segList) {
+      const p = W.get(s.name).t; pts.push(p); minZ = Math.min(minZ, p[2]);
+      joints.push({ p, selected: s.name === selSeg });
+      if (s.parent) bones.push({ a: W.get(s.parent.name).t, b: p, seg: s.parent.name, side: sideOf(s.parent.name), selected: s.parent.name === selSeg });
+    }
+    const selMarkerSegs = new Set();
+    const mpos = new Map();
+    for (const [name, el] of m.markers) {
+      const pl = m.primaryPlacement(name); if (!pl) continue;
+      const M = W.get(pl.segment); if (!M) continue;
+      const p = KM.apply(M, pl.local); mpos.set(name, p); minZ = Math.min(minZ, p[2]);
+      markers.push({ name, p, color: rgbCss(el.getAttribute('RGB')), r: parseFloat(el.getAttribute('RADIUS')) || 7, status: el.getAttribute('STATUS'), selected: name === selMk, dim: selSeg ? pl.segment !== selSeg : false });
+      if (name === selMk) for (const q of m.markerPlacements(name)) selMarkerSegs.add(q.segment);
+    }
+    for (const b of bones) if (selMarkerSegs.has(b.seg)) b.selected = true;
+    for (const st of m.sticks) { const a = mpos.get(st.getAttribute('MARKER1')), b = mpos.get(st.getAttribute('MARKER2')); if (a && b) sticks.push({ a, b, color: rgbCss(st.getAttribute('RGB1')) }); }
+    const C = colors();
+    const pm = P();
+    if (pm && $('#optGhost').checked) {
+      const Wp = pm.computeWorld(); const gb = [], gm = [];
+      for (const s of pm.segList) if (s.parent) gb.push({ a: Wp.get(s.parent.name).t, b: Wp.get(s.name).t });
+      for (const name of pm.markers.keys()) { const p = pm.markerWorld(name, Wp); if (p) gm.push({ p }); }
+      ghosts.push({ bones: gb, markers: gm, color: C.vpMuted, dash: true, width: 1 });
+    }
+    const poses = previewPoses(m);
+    if (poses) {
+      const seg = m.segments.get(selSeg); const sub = new Set(descendants(seg).map(s => s.name));
+      poses.forEach((pose, k) => {
+        const Wq = m.computeWorld(pose); const gb = [];
+        for (const s of m.segList) if (s.parent && (sub.has(s.name))) gb.push({ a: Wq.get(s.parent.name).t, b: Wq.get(s.name).t });
+        ghosts.push({ bones: gb, color: k === 2 ? C.accent : C.accent, dash: k !== 2, width: k === 2 ? 2.5 : 1.5 });
+      });
+    }
+    const add = S.ui.adding && addPreview(m, W);
+    if (add) ghosts.push({ bones: [], markers: [{ p: add, label: (S.ui.adding.name || '新しいマーカー') + '（追加位置）' }], color: C.accent });
+    let overlay = `${m.fileName}  ·  セグメント ${m.segList.length}  ·  マーカー ${m.markers.size}`;
+    if (poses) overlay += '  ·  緑の破線＝可動域の両端、実線＝中心（目安）';
+    return { bones, joints, markers, sticks, ghosts, floorZ: isFinite(minZ) ? minZ - 25 : -900, overlay, pts };
+  }
+  function drawScene() { if (!viewer) return; const sc = buildScene(); viewer.setScene(sc || { bones: [], joints: [], markers: [], sticks: [], ghosts: [] }); }
+  function fitView() { const sc = buildScene(); if (sc && sc.pts.length) viewer.frame(sc.pts); }
+  function focusSel() {
+    const m = A(); if (!m || !S.sel) return; const W = m.computeWorld();
+    let p = null;
+    if (S.sel.kind === 'marker') p = m.markerWorld(S.sel.name, W);
+    else { const s = m.segments.get(S.sel.name); if (s) { const pts = [W.get(s.name).t, ...s.children.map(c => W.get(c.name).t)]; p = [0, 1, 2].map(i => pts.reduce((a, q) => a + q[i], 0) / pts.length); } }
+    if (p) { viewer.target = p; viewer.dist = S.sel.kind === 'marker' ? 650 : 1300; viewer.draw(); }
+  }
+
+  /* ---------------- header & edit bar ---------------- */
+  function renderHeader() {
+    const slots = ['labeling', 'solving'].map(r => {
+      const m = S.m[r];
+      if (!m) return `<div class="slot empty"><span class="role">${ROLE_LABEL[r]}（${r === 'labeling' ? 'VST / VSK' : 'VSS'}）</span><span class="fname">未読み込み</span></div>`;
+      return `<button class="slot" data-act="activate" data-role="${r}" aria-pressed="${S.active === r}"><span class="role">${ROLE_LABEL[r]}${S.demo ? '・デモ' : ''}</span><span class="fname" title="${esc(m.fileName)}">${esc(m.fileName)}</span><span class="kind pill ${m.isTemplate ? 'tmpl' : 'cal'}">${m.isTemplate ? 'テンプレート' : 'キャリブレーション済み'}</span></button>`;
+    }).join('');
+    $('#slots').innerHTML = slots;
+    $('#undoBtn').disabled = !S.hist.length; $('#redoBtn').disabled = !S.fut.length;
+    $('#exportBtn').disabled = !A();
+    const m = A(), pm = P();
+    if (!m) { $('#editbar').innerHTML = '<span>ファイルを開くと編集できます</span>'; return; }
+    const pairNote = pm && pm.baseName !== m.baseName ? `<span class="pill" title="ファイル名が違うペアです">名前違いのペア</span>` : '';
+    $('#editbar').innerHTML = `
+      <span>編集中 <strong>${ROLE_LABEL[S.active]}</strong></span>
+      <label class="check" title="ファイルの扱い（変更の既定値が変わります）">種類
+        <select id="kindSel" class="mono" style="padding:1px 4px;border:1px solid var(--line);border-radius:4px;background:var(--panel)">
+          <option value="t" ${m.isTemplate ? 'selected' : ''}>テンプレート</option><option value="c" ${m.isTemplate ? '' : 'selected'}>キャリブレーション済み</option></select></label>
+      ${pm ? `<label class="check"><input type="checkbox" id="syncChk" ${S.sync ? 'checked' : ''}>ペア（${ROLE_SHORT[otherRole(S.active)]}）にも反映</label>` : '<span>ペア未読み込み</span>'}
+      ${pairNote}${S.demo ? '<span class="demo-note">デモ（架空のモデル）を表示中です。「ファイルを開く」で VST・VSK・VSS を読み込めます。</span>' : ''}`;
+  }
+
+  /* ---------------- edits with pair sync ---------------- */
+  const counterpart = n => { const c = n.replace(/Left|Right/g, x => x === 'Left' ? 'Right' : 'Left'); return c !== n ? c : null; };
+  function scaleParamIn(model, name, oldV, newV, withPrior) {
+    const info = model.paramInfo(name); if (!info || info.isStatic || info.expression) return null;
+    const nv = Math.abs(oldV) > 1e-9 ? info.value * (newV / oldV) : info.value + (newV - oldV);
+    const op = info.value; model.setParam(name, { value: nv, prior: withPrior ? nv : null });
+    return `${name} ${fmt(op)} → ${fmt(nv)}`;
+  }
+  function editParam(name, newV, opts = {}) {
+    const m = A(); const info = m.paramInfo(name); const old = info.value; const msgs = [];
+    const priorToo = opts.prior ?? m.isTemplate;
+    m.setParam(name, { value: newV, prior: priorToo ? newV : null });
+    msgs.push(`${name} ${fmt(old)} → ${fmt(newV)}`);
+    const names = [name];
+    if (opts.symmetric) { const c = counterpart(name); if (c && m.params.has(c)) { const r = scaleParamIn(m, c, old, newV, priorToo); if (r) { msgs.push(r + '（左右対称）'); names.push(c); } } }
+    if (opts.sync !== false && syncOn()) { const pm = P(); for (const n of names) if (pm.params.has(n)) { const r = scaleParamIn(pm, n, old, newV, pm.isTemplate); if (r) msgs.push(ROLE_SHORT[pm.role] + ': ' + r); } }
+    return msgs;
+  }
+  function flexFactors(m, seg, targetK, dofIdx) {
+    // factor to bring DOF(s) from the current multiplier to targetK (relative to the original file)
+    const st = m.jointStats(seg), os = S.orig[m.role] && S.orig[m.role].jointStats(seg);
+    return st.dofs.map((d, i) => {
+      if (dofIdx != null && i !== dofIdx && !S.ui.linkDofs) return 1;
+      const base = os && os.dofs[i] && os.dofs[i].sd ? os.dofs[i].sd : d.sd; const curK = d.sd && base ? d.sd / base : 1;
+      return curK > 0 ? targetK / curK : 1;
+    });
+  }
+  function editFlex(seg, factors) {
+    const m = A(); m.scaleJoint(seg, factors); const msgs = [`${seg} 曲がりやすさ ×${factors.map(f => f.toFixed(2)).join(' / ×')}`];
+    if (syncOn()) { const pm = P(); const s2 = pm.segments.get(seg); if (s2 && s2.jointType === m.segments.get(seg).jointType) { pm.scaleJoint(seg, factors); msgs.push(ROLE_SHORT[pm.role] + ': 同じ倍率'); } else msgs.push(ROLE_SHORT[pm.role] + ': 対応する関節なし'); }
+    return msgs;
+  }
+  function moveMarker(name, d) {
+    const m = A(); const pls = m.markerPlacements(name); if (!pls.length) throw new Error('このマーカーには位置（ターゲット）がありません');
+    const W = m.computeWorld(); const prim = m.primaryPlacement(name);
+    const dWorld = KM.mv3(W.get(prim.segment).R, d);
+    const clean = v => v.map(x => Math.abs(x) < 1e-6 ? 0 : x);
+    const opts = { movePrior: m.isTemplate, allowShared: S.ui.moveShared };
+    const acts = [];
+    for (const pl of pls) { const same = pl.segment === prim.segment; const dl = same ? d : clean(KM.mtv3(W.get(pl.segment).R, dWorld)); acts.push(...m.movePlacement(pl, dl, opts).map(a => (pls.length > 1 ? pl.segment + ' ' : '') + a)); }
+    m.reindex();
+    if (syncOn()) {
+      const pm = P();
+      if (pm.markers.has(name)) { const Wp = pm.computeWorld(); for (const pl of pm.markerPlacements(name)) { const dl = clean(KM.mtv3(Wp.get(pl.segment).R, dWorld)); acts.push(...pm.movePlacement(pl, dl, { movePrior: pm.isTemplate, allowShared: S.ui.moveShared }).map(a => ROLE_SHORT[pm.role] + ' ' + a)); } pm.reindex(); }
+      else acts.push(ROLE_SHORT[pm.role] + ': このマーカーはありません');
+    }
+    return acts;
+  }
+  function pairPlacement(src, pm, seg, local, pairSegOverride) {
+    const W = src.computeWorld(), Wp = pm.computeWorld();
+    const pw = KM.apply(W.get(seg), local);
+    let ref = null, bd = Infinity;
+    for (const n of src.markers.keys()) {
+      const pl = src.primaryPlacement(n); if (!pl || pl.segment !== seg || !pm.markers.has(n) || !pm.primaryPlacement(n)) continue;
+      const q = KM.apply(W.get(seg), pl.local); const d = Math.hypot(q[0] - pw[0], q[1] - pw[1], q[2] - pw[2]);
+      if (d < bd) { bd = d; ref = { n, q }; }
+    }
+    let pseg = pairSegOverride, ppw;
+    if (ref) { pseg = pseg || pm.primaryPlacement(ref.n).segment; const rp = pm.markerWorld(ref.n, Wp); ppw = rp.map((v, i) => v + pw[i] - ref.q[i]); }
+    else if (pm.segments.has(seg) && !pseg) return { segment: seg, local: local.slice() };
+    else { if (!pseg) { let s = src.segments.get(seg); while (s && !pm.segments.has(s.name)) s = s.parent; pseg = s ? s.name : pm.segList[0].name; } ppw = pw; }
+    return { segment: pseg, local: KM.invApply(Wp.get(pseg), ppw), ref: ref && ref.n };
+  }
+
+  /* ---------------- skeleton tab ---------------- */
+  function segParams(m, seg) {
+    const own = [], kidsP = [];
+    const namesIn = (s) => { if (!s.jt) return []; const set = new Set(); for (const a of ['PRE-POSITION', 'PRE-ORIENTATION']) { const v = s.jt.getAttribute(a); if (v) for (const c of KM.splitTop(v)) if (!KM.isNumStr(c)) KM.compile(c).names.forEach(n => set.add(n)); } return [...set]; };
+    for (const n of namesIn(seg)) own.push({ n, via: '親からの位置' });
+    for (const c of seg.children) for (const n of namesIn(c)) kidsP.push({ n, via: '→ ' + c.name });
+    const seen = new Set(); return [...kidsP, ...own].filter(x => !seen.has(x.n) && seen.add(x.n));
+  }
+  function renderSkelList() {
+    const m = A(); const box = $('#segList'); if (!m || !box) return;
+    const f = S.ui.segFilter.toLowerCase();
+    box.innerHTML = m.segList.filter(s => !f || s.name.toLowerCase().includes(f)).map(s => `<div class="row" role="option" data-act="selSeg" data-name="${esc(s.name)}" aria-selected="${S.sel?.kind === 'segment' && S.sel.name === s.name}" style="padding-left:${8 + (f ? 0 : s.depth * 10)}px"><span class="dot" style="background:${s.name.startsWith('Left') ? 'var(--left)' : s.name.startsWith('Right') ? 'var(--right)' : 'var(--center)'}"></span>${esc(s.name)}<span class="meta">${s.jointType ? esc(s.jointType.replace('Joint', '')) : ''}${m.pcaJoints.has(s.name) ? ' · PCA' : ''}</span></div>`).join('') || '<div class="empty-state">該当するセグメントがありません</div>';
+  }
+  function rangeBar(o, c) {
+    // o / c: {lo, hi, mid} in degrees
+    const span = 360, pos = v => Math.max(0, Math.min(100, (v + 180) / span * 100));
+    const part = (r, cls) => r ? `<div class="${cls}" style="left:${pos(r.lo)}%;width:${Math.max(0.6, pos(r.hi) - pos(r.lo))}%"></div>` : '';
+    return `<div class="rangebar" aria-hidden="true"><div class="ticks"><span>−180°</span><span>0°</span><span>+180°</span></div>${part(o, 'orig')}${part(c, 'cur')}<div class="zero" style="left:50%"></div></div>`;
+  }
+  function dofRange(d) { if (d.half == null || d.center == null) return null; return { lo: deg(d.center - d.half), hi: deg(d.center + d.half) }; }
+  function renderSkel() {
+    const el = $('#tab-skel'); const m = A();
+    if (!m) { el.innerHTML = '<div class="empty-state">ファイルを開いてください</div>'; return; }
+    const seg = S.sel?.kind === 'segment' ? m.segments.get(S.sel.name) : null;
+    let card = '<div class="empty-state">3D ビューで骨をクリックするか、一覧からセグメントを選んでください</div>';
+    if (seg) {
+      const W = m.computeWorld();
+      const lens = seg.children.map(c => { const p = KM.nums(c.joint?.getAttribute('PRE-POSITION')); return `<span class="chip" style="padding-right:8px">→ ${esc(c.name)} <b>${fmt(Math.hypot(...(p.length === 3 ? p : [0, 0, 0])), 1)}</b> mm</span>`; }).join('');
+      const allParams = segParams(m, seg);
+      const isEditable = n => { const i = m.paramInfo(n); return i && !i.isStatic && !i.expression; };
+      const params = allParams.filter(p => isEditable(p.n)); const fixedParams = allParams.filter(p => !isEditable(p.n) && m.params.has(p.n));
+      const prior = m.isTemplate;
+      const hasCp = params.some(p => { const c = counterpart(p.n); return c && m.params.has(c); });
+      const prows = params.map(({ n, via }) => {
+        const info = m.paramInfo(n); if (!info) return '';
+        const o = S.orig[m.role]?.paramInfo(n); const ov = o ? o.value : info.value;
+        const lo = Math.abs(ov) > 1e-6 ? Math.min(ov * 0.5, ov * 1.5) : -50, hi = Math.abs(ov) > 1e-6 ? Math.max(ov * 0.5, ov * 1.5) : 50;
+        const owners = [...new Set(info.refs.map(r => r.owner.name))];
+        const editable = !info.isStatic && !info.expression;
+        return `<div class="prow"><span class="pname">${esc(n)}</span>
+          <input class="num" type="number" step="any" data-act="paramInput" data-name="${esc(n)}" value="${+info.value.toFixed(3)}" ${editable ? '' : 'disabled'} aria-label="${esc(n)} の値">
+          ${editable ? `<input type="range" min="${lo}" max="${hi}" step="${(hi - lo) / 400}" value="${info.value}" data-act="paramRange" data-name="${esc(n)}" aria-label="${esc(n)} スライダー">` : ''}
+          <span class="pmeta"><span>${esc(via)}</span>${info.prior != null ? `<span>PRIOR ${fmt(info.prior)}</span>` : ''}${info.sd != null ? `<span>SD ${fmt(info.sd, 3)}</span>` : ''}<span>元 ${fmt(ov)}</span><span title="${esc(owners.join(', '))}">参照 ${info.refs.length}${owners.length > 1 ? '（' + esc(owners.slice(0, 3).join('・')) + (owners.length > 3 ? '…' : '') + '）' : ''}</span>${info.isStatic ? '<span>固定値</span>' : ''}</span></div>`;
+      }).join('');
+      // flexibility
+      const st = m.jointStats(seg.name), os = S.orig[m.role]?.jointStats(seg.name);
+      let flex = '';
+      if (!st || !st.n) flex = '<p class="note">この関節には自由度がありません（Dummy：固定）。</p>';
+      else {
+        const labels = m.dofLabels(seg.name);
+        const isFree = seg.jointType === 'JointFree';
+        const rows = st.dofs.map((d, i) => {
+          const od = os?.dofs[i]; const k = od?.sd ? d.sd / od.sd : 1; const lk = Math.log2(Math.max(1 / 16, Math.min(16, k)));
+          const unit = isFree && i >= 3 ? 'mm' : '°'; const cv = v => unit === '°' ? fmt(deg(v), 1) + '°' : fmt(v, 0) + ' mm';
+          const r = dofRange(d), orr = od ? dofRange(od) : null;
+          return `<div class="dof">
+            <label class="lab"><input type="radio" name="pdof" data-act="pdof" value="${i}" ${S.ui.previewDof === i ? 'checked' : ''} ${isFree ? 'disabled' : ''}>${esc(labels[i] || 'DOF ' + (i + 1))}</label>
+            <input type="range" min="-2" max="2" step="0.01" value="${lk.toFixed(3)}" data-act="flexRange" data-dof="${i}" aria-label="${esc(labels[i])} の曲がりやすさ">
+            <span class="val" data-live="k${i}">${k.toFixed(2)}×</span>
+            <span class="stats" data-live="s${i}"><span>SD ${cv(d.sd)}${od && Math.abs(k - 1) > 1e-6 ? `（元 ${cv(od.sd)}）` : ''}</span>${r && unit === '°' ? `<span>可動域 ${fmt(r.lo, 0)}° 〜 ${fmt(r.hi, 0)}°</span>` : ''}</span>
+            ${r && unit === '°' ? rangeBar(orr, r) : ''}
+          </div>`;
+        }).join('');
+        flex = `${st.pca && m.role === 'solving' ? `<p class="note warn">この関節はソルビング時に PCA（${esc(st.pca)}）でも拘束されます。関節ごとの変更は効きにくい場合があります。</p>` : st.pca ? `<p class="note">ソルビング側では PCA（${esc(st.pca)}）でも拘束される関節です。</p>` : ''}
+          ${isFree ? '<p class="note">ルートの Free 関節です。並進の分散はとても大きく設定されています。</p>' : ''}
+          ${rows}
+          <div class="row-btns"><label class="check"><input type="checkbox" data-act="linkDofs" ${S.ui.linkDofs ? 'checked' : ''}>すべての自由度を同じ倍率に</label>
+          <label class="check"><input type="checkbox" data-act="previewOn" ${S.ui.previewOn ? 'checked' : ''} ${isFree ? 'disabled' : ''}>3D に可動域を表示</label>
+          <button class="btn small" data-act="flexReset">元の値に戻す</button></div>
+          <details class="adv" data-key="shift" ${S.ui.open.has('shift') ? 'open' : ''}><summary>中心の角度をずらす（よく取る姿勢）</summary>
+            <div class="grid3">${st.dofs.map((d, i) => `<label>${esc(labels[i])}（°）<input class="num" type="number" step="0.5" value="0" data-shift="${i}"></label>`).join('')}</div>
+            <div class="row-btns" style="margin-top:6px"><span class="note">現在の中心: ${st.dofs.map(d => d.center != null ? fmt(isFree ? d.center : deg(d.center), 1) : '—').join(' / ')}</span><button class="btn small" data-act="shiftCenter">ずらす</button></div>
+            <p class="note">MEAN（姿勢の事前分布の平均）と RANGE-CENTRING-STATE（可動域の中心）を同じだけ動かします。</p>
+          </details>
+          <p class="note">倍率は角度の標準偏差に掛かります（分散は倍率の2乗）。COVARIANCE と RANGE-MATRIX を同じ比率で変更し、JointTemplate 側にも反映します。大きくすると曲がりやすく、小さくすると曲がりにくくなります。</p>`;
+      }
+      const pairFlex = syncOn() ? (P().segments.has(seg.name) ? '' : `<p class="note">ペア（${ROLE_SHORT[P().role]}）には ${esc(seg.name)} がないため、ペアには反映されません。</p>`) : '';
+      card = `<div class="card">
+        <header><h3>${esc(seg.name)}</h3><span class="sub">${esc(JOINT_LABEL[seg.jointType] || seg.jointType || '')} · 親 ${esc(seg.parent?.name || 'なし')}</span></header>
+        <section><h4>長さ・幅</h4>
+          ${lens ? `<div class="chips">${lens}</div>` : '<p class="note">子セグメントがない末端です。</p>'}
+          ${prows || '<p class="note">この骨の位置を決める編集可能なパラメータはありません。</p>'}
+          ${fixedParams.length ? `<details class="adv"><summary>固定値（StaticParameter）${fixedParams.length} 個</summary><div class="chips">${fixedParams.map(p => `<span class="chip" style="padding-right:8px">${esc(p.n)} = ${fmt(m.pval(p.n), 3)}</span>`).join('')}</div><p class="note">固定値は「パラメータ」タブで「固定値も編集する」をオンにすると編集できます。</p></details>` : ''}
+          ${params.length ? `<div class="row-btns">${hasCp ? `<label class="check"><input type="checkbox" data-act="symmetric" ${S.ui.symmetric ? 'checked' : ''}>左右対称に反映</label>` : ''}
+            <span class="note">${prior ? 'テンプレートなので PRIOR も同じ値にします。' : 'VALUE のみ変更します（PRIOR は再キャリブレーションの初期値）。'}${syncOn() ? ` ペアの同名パラメータにも同じ比率で反映します。` : ''}</span></div>` : ''}
+        </section>
+        <section><h4>曲がりやすさ</h4>${pairFlex}${flex}</section>
+      </div>`;
+    }
+    el.innerHTML = `<input class="search" type="search" id="segFilter" placeholder="セグメントを検索（例: Arm）" value="${esc(S.ui.segFilter)}" aria-label="セグメントを検索">
+      <div class="listbox" id="segList" role="listbox" aria-label="セグメント一覧"></div>${card}`;
+    renderSkelList();
+  }
+
+  /* ---------------- marker tab ---------------- */
+  const hexOf = rgb => '#' + (rgb || '255 255 255').trim().split(/\s+/).map(v => (+v | 0).toString(16).padStart(2, '0')).join('');
+  const rgbOf = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).join(' ');
+  function defaultAdd(m) {
+    const segName = S.sel?.kind === 'segment' ? S.sel.name : (S.sel?.kind === 'marker' ? m.primaryPlacement(S.sel.name)?.segment : null) || m.segList.find(s => s.children.length)?.name;
+    return { name: '', segment: segName, mode: 'local', ref: '', x: 0, y: 0, z: 0, status: 'required', radius: 7, color: '#ffd400', proto: '', parametrize: true, sd: 1, pairSeg: '' };
+  }
+  function midBone(m, segName) { const s = m.segments.get(segName); if (!s || !s.children.length) return [0, 0, 0]; const p = KM.nums(s.children[0].joint?.getAttribute('PRE-POSITION')); return p.length === 3 ? p.map(v => +(v / 2).toFixed(1)) : [0, 0, 0]; }
+  function addLocal(m, W) {
+    const a = S.ui.adding; if (!a || !m.segments.has(a.segment)) return null;
+    const d = [+a.x || 0, +a.y || 0, +a.z || 0];
+    if (a.mode === 'local') return d;
+    if (a.mode === 'world') return KM.invApply(W.get(a.segment), d);
+    if (a.mode === 'ref') { const rp = m.markerWorld(a.ref, W); if (!rp) return null; const pl = m.primaryPlacement(a.ref); const dw = KM.mv3(W.get(pl.segment).R, d); return KM.invApply(W.get(a.segment), rp.map((v, i) => v + dw[i])); }
+    return null;
+  }
+  function addPreview(m, W) { const l = addLocal(m, W); return l ? KM.apply(W.get(S.ui.adding.segment), l) : null; }
+  function renderAddForm(m) {
+    const a = S.ui.adding; const segOpts = m.segList.map(s => `<option ${s.name === a.segment ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
+    const mkOpts = (sel, blank) => (blank ? `<option value="">${blank}</option>` : '') + [...m.markers.keys()].map(n => `<option ${n === sel ? 'selected' : ''}>${esc(n)}</option>`).join('');
+    const pm = syncOn() ? P() : null;
+    let pairRow = '';
+    if (pm) {
+      const W = m.computeWorld(); const l = addLocal(m, W);
+      const guess = l ? pairPlacement(m, pm, a.segment, l, a.pairSeg || null) : null;
+      pairRow = `<label class="field" style="grid-column:1/3">${ROLE_SHORT[pm.role]} 側のセグメント（${guess ? '推定: ' + esc(guess.segment) + (guess.ref ? '、' + esc(guess.ref) + ' 基準' : '') : '—'}）
+        <select data-add="pairSeg"><option value="">自動（推定に従う）</option>${pm.segList.map(s => `<option ${s.name === a.pairSeg ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label>`;
+    }
+    const modeLabel = { local: 'セグメント座標（mm）', ref: '基準マーカーからの差（mm、基準マーカーのセグメント向き）', world: '世界座標（mm、基本姿勢）' }[a.mode];
+    return `<div class="card"><header><h3 style="font-family:var(--sans);font-size:14px">マーカーを追加</h3><span class="sub">${esc(m.fileName)}${pm ? ' ＋ ' + esc(pm.fileName) : ''}</span></header>
+      <section>
+        <div class="fields">
+          <label class="field">名前<input data-add="name" value="${esc(a.name)}" placeholder="例: LELB2" autocomplete="off" spellcheck="false"></label>
+          <label class="field">セグメント<select data-add="segment">${segOpts}</select></label>
+          <label class="field">位置の決め方<select data-add="mode"><option value="local" ${a.mode === 'local' ? 'selected' : ''}>セグメント座標</option><option value="ref" ${a.mode === 'ref' ? 'selected' : ''}>既存マーカーからの差</option><option value="world" ${a.mode === 'world' ? 'selected' : ''}>世界座標</option></select></label>
+          ${a.mode === 'ref' ? `<label class="field">基準マーカー<select data-add="ref">${mkOpts(a.ref, '選んでください')}</select></label>` : '<span></span>'}
+        </div>
+        <div class="field">${modeLabel}</div>
+        <div class="grid3"><label>X<input class="num" type="number" step="any" data-add="x" value="${a.x}"></label><label>Y<input class="num" type="number" step="any" data-add="y" value="${a.y}"></label><label>Z<input class="num" type="number" step="any" data-add="z" value="${a.z}"></label></div>
+        <div class="fields">
+          <label class="field">STATUS<select data-add="status"><option value="required" ${a.status === 'required' ? 'selected' : ''}>required（必須）</option><option value="optional" ${a.status === 'optional' ? 'selected' : ''}>optional（任意）</option></select></label>
+          <label class="field">半径（mm）<input class="num" type="number" step="0.5" data-add="radius" value="${a.radius}"></label>
+          <label class="field">色<input type="color" data-add="color" value="${a.color}"></label>
+          <label class="field">設定のコピー元<select data-add="proto">${mkOpts(a.proto, '自動（同じセグメントのマーカー）')}</select></label>
+          <label class="check" style="grid-column:1/3"><input type="checkbox" data-add="parametrize" ${a.parametrize ? 'checked' : ''}>位置をパラメータにする（キャリブレーションで位置を調整できる）</label>
+          ${a.parametrize ? `<label class="field">位置パラメータの SD（mm）<input class="num" type="number" step="0.1" data-add="sd" value="${a.sd}"></label><span></span>` : ''}
+          ${pairRow}
+        </div>
+        <p class="note">ターゲットの共分散・重みなどはコピー元マーカーのターゲットから引き継ぎます。3D ビューの点線の円が追加位置です。</p>
+        <div class="row-btns"><button class="btn primary" data-act="addMarkerDo">追加する</button><button class="btn" data-act="addMarkerCancel">キャンセル</button></div>
+      </section></div>`;
+  }
+  function renderMarkList() {
+    const m = A(); const box = $('#markList'); if (!m || !box) return;
+    const f = S.ui.markFilter.toLowerCase();
+    const rows = [...m.markers.entries()].filter(([n]) => !f || n.toLowerCase().includes(f)).map(([n, el]) => {
+      const pl = m.primaryPlacement(n); const st = el.getAttribute('STATUS');
+      return `<div class="row" role="option" data-act="selMarker" data-name="${esc(n)}" aria-selected="${S.sel?.kind === 'marker' && S.sel.name === n}"><span class="dot" style="background:${rgbCss(el.getAttribute('RGB'))}"></span>${esc(n)}<span class="meta">${esc(pl ? pl.segment : 'ターゲットなし')}<span class="pill ${st === 'optional' ? 'opt' : 'req'}">${st === 'optional' ? '任意' : st === 'required' ? '必須' : esc(st)}</span></span></div>`;
+    });
+    box.innerHTML = rows.join('') || '<div class="empty-state">該当するマーカーがありません</div>';
+  }
+  function renderMark() {
+    const el = $('#tab-mark'); const m = A();
+    if (!m) { el.innerHTML = '<div class="empty-state">ファイルを開いてください</div>'; return; }
+    const name = S.sel?.kind === 'marker' && m.markers.has(S.sel.name) ? S.sel.name : null;
+    let card = '<div class="empty-state">3D ビューでマーカーをクリックするか、一覧から選んでください</div>';
+    if (name) {
+      const mel = m.markers.get(name); const pls = m.markerPlacements(name); const prim = m.primaryPlacement(name);
+      const W = m.computeWorld(); const wpos = prim ? KM.apply(W.get(prim.segment), prim.local) : null;
+      const sticks = m.sticks.filter(s => s.getAttribute('MARKER1') === name || s.getAttribute('MARKER2') === name).map(s => s.getAttribute('MARKER1') === name ? s.getAttribute('MARKER2') : s.getAttribute('MARKER1'));
+      const pm = syncOn() ? P() : null;
+      const nud = prim ? ['X', 'Y', 'Z'].map((a, i) => `<div class="nudge"><b>${a}</b>${[-5, -1, 1, 5].map(v => `<button class="btn small" data-act="nudge" data-axis="${i}" data-v="${v}">${v > 0 ? '+' : '−'}${Math.abs(v)}</button>`).join('')}<span class="loc">${fmt(prim.local[i], 1)}</span></div>`).join('') : '';
+      const expr = pls.map(pl => `<div class="kv"><dt>${esc(pl.kind === 'rigid' ? 'クラスター ' + pl.rb.name : pl.t.name)}</dt><dd>${esc(pl.kind === 'rigid' ? pl.m.el.getAttribute('POSITION') : pl.t.el.getAttribute('POSITION'))}</dd></div>`).join('');
+      const del = S.ui.confirmDelete === name ? (() => {
+        const nT = (m.targetsByMarker.get(name) || []).length + (m.rbByMarker.has(name) ? 1 : 0);
+        return `<div class="confirm"><b>${esc(name)} を削除しますか？</b><span>ターゲット ${nT}・スティック ${sticks.length} も一緒に削除します。${pm && pm.markers.has(name) ? ROLE_SHORT[pm.role] + ' 側の ' + esc(name) + ' も削除します。' : ''}</span>
+          <label class="check"><input type="checkbox" data-act="delParams" ${S.ui.delParams ? 'checked' : ''}>このマーカー専用の位置パラメータも削除（オフのときは Shogun と同じくパラメータを残します）</label>
+          <div class="row-btns"><button class="btn danger solid" data-act="deleteDo">削除する</button><button class="btn" data-act="deleteCancel">やめる</button></div></div>`;
+      })() : `<div class="row-btns"><button class="btn danger" data-act="deleteAsk">このマーカーを削除</button></div>`;
+      card = `<div class="card">
+        <header><span class="dot" style="background:${rgbCss(mel.getAttribute('RGB'))};width:12px;height:12px"></span><h3>${esc(name)}</h3><span class="sub">${pls.map(p => esc(p.segment)).join('・') || 'ターゲットなし'}</span></header>
+        <section><h4>属性</h4>
+          <div class="fields">
+            <label class="field">STATUS<select data-act="mStatus"><option value="required" ${mel.getAttribute('STATUS') === 'required' ? 'selected' : ''}>required（必須）</option><option value="optional" ${mel.getAttribute('STATUS') === 'optional' ? 'selected' : ''}>optional（任意）</option>${!['required', 'optional'].includes(mel.getAttribute('STATUS')) ? `<option selected>${esc(mel.getAttribute('STATUS'))}</option>` : ''}</select></label>
+            <label class="field">半径（mm）<input class="num" type="number" step="0.5" data-act="mRadius" value="${esc(mel.getAttribute('RADIUS'))}"></label>
+            <label class="field">色<input type="color" data-act="mColor" value="${hexOf(mel.getAttribute('RGB'))}"></label>
+          </div>
+        </section>
+        <section><h4>位置<span class="right mono">${prim ? esc(prim.segment) + ' 座標' : ''}</span></h4>
+          ${prim ? `${nud}
+            <div class="grid3"><label>ΔX<input class="num" type="number" step="any" id="dx" value="0"></label><label>ΔY<input class="num" type="number" step="any" id="dy" value="0"></label><label>ΔZ<input class="num" type="number" step="any" id="dz" value="0"></label></div>
+            <div class="row-btns"><button class="btn small primary" data-act="moveDo">指定量だけ移動</button>
+              <label class="check" title="専用のパラメータがない軸で、他のマーカーと共有しているパラメータを変更します"><input type="checkbox" data-act="moveShared" ${S.ui.moveShared ? 'checked' : ''}>共有パラメータも動かす</label></div>
+            <p class="note">移動量は mm、${esc(prim.segment)} のローカル座標です。世界座標（基本姿勢）: ${wpos.map(v => fmt(v, 0)).join(', ')}。${m.isTemplate ? 'テンプレートなので PRIOR も動かします。' : 'VALUE を動かします。'}${pls.length > 1 ? ` このマーカーは ${pls.length} 個のターゲットを持ち、すべて同じだけ動かします。` : ''}${pm ? (pm.markers.has(name) ? ` ${ROLE_SHORT[pm.role]} 側も同じ量だけ動かします。` : ` ${ROLE_SHORT[pm.role]} 側にはこのマーカーがありません。`) : ''}</p>
+            ${S.ui.lastMove ? `<p class="note ok">${esc(S.ui.lastMove)}</p>` : ''}
+            <details class="adv" data-key="expr" ${S.ui.open.has('expr') ? 'open' : ''}><summary>位置の式（POSITION）</summary>${expr}</details>` : '<p class="note warn">このマーカーにはターゲットがないため位置が決まりません。</p>'}
+        </section>
+        <section><h4>スティック</h4>
+          <div class="chips">${sticks.map(o => `<span class="chip">${esc(name)}–${esc(o)}<button data-act="stickDel" data-other="${esc(o)}" aria-label="${esc(o)} とのスティックを削除">×</button></span>`).join('') || '<span class="note">つながっているマーカーはありません</span>'}</div>
+          <div class="row-btns"><select id="stickTo" class="mono" style="padding:3px 6px;border:1px solid var(--line);border-radius:4px;background:var(--panel-2)">${[...m.markers.keys()].filter(n => n !== name && !sticks.includes(n)).map(n => `<option>${esc(n)}</option>`).join('')}</select><button class="btn small" data-act="stickAdd">つなぐ</button></div>
+        </section>
+        <section>${del}</section>
+      </div>`;
+    }
+    el.innerHTML = `<div class="row-btns" style="flex-wrap:nowrap"><input class="search" type="search" id="markFilter" placeholder="マーカーを検索" value="${esc(S.ui.markFilter)}" aria-label="マーカーを検索"><button class="btn" data-act="addMarkerOpen" ${S.ui.adding ? 'disabled' : ''}>＋ 追加</button></div>
+      ${S.ui.adding ? renderAddForm(m) : ''}
+      <div class="listbox" id="markList" role="listbox" aria-label="マーカー一覧"></div>${card}`;
+    renderMarkList();
+  }
+
+  /* ---------------- parameter tab ---------------- */
+  function paramRows(m) {
+    const f = S.ui.paramFilter.toLowerCase(); const g = S.ui.paramGroup;
+    const out = [];
+    for (const [n, el] of m.params) {
+      const isStatic = el.tagName === 'StaticParameter';
+      const grp = isStatic ? 'static' : m.paramGroup(n);
+      if (g !== 'all' && grp !== g) continue;
+      if (f && !n.toLowerCase().includes(f)) continue;
+      out.push({ n, el, isStatic });
+    }
+    return out;
+  }
+  function renderParam() {
+    const el = $('#tab-param'); const m = A();
+    if (!m) { el.innerHTML = '<div class="empty-state">ファイルを開いてください</div>'; return; }
+    const counts = {}; for (const [n, e] of m.params) { const g = e.tagName === 'StaticParameter' ? 'static' : m.paramGroup(n); counts[g] = (counts[g] || 0) + 1; } counts.all = m.params.size;
+    const rows = paramRows(m); const om = S.orig[m.role];
+    const shown = rows.slice(0, S.ui.paramLimit);
+    const tr = shown.map(({ n, el: pel, isStatic }) => {
+      const o = om?.params.get(n); const changed = !o || ['VALUE', 'PRIOR', 'SD'].some(a => o.getAttribute(a) !== pel.getAttribute(a));
+      const ed = !isStatic || S.ui.editStatic; const expr = pel.getAttribute('EXPRESSION');
+      const cell = (a) => pel.hasAttribute(a) ? (ed && !(a === 'VALUE' && expr && !pel.hasAttribute('VALUE')) ? `<td><input class="num" type="number" step="any" data-act="pcell" data-name="${esc(n)}" data-attr="${a}" value="${esc(pel.getAttribute(a))}" aria-label="${esc(n)} ${a}"></td>` : `<td class="ro">${esc(fmt(parseFloat(pel.getAttribute(a)), 3))}</td>`) : `<td class="ro">${a === 'VALUE' && expr ? '<span title="' + esc(expr) + '">式</span>' : '—'}</td>`;
+      return `<tr class="${changed ? 'changed' : ''}"><td class="n" title="${esc(expr || '')}">${esc(n)}</td>${cell('VALUE')}${cell('PRIOR')}${cell('SD')}<td class="ro">${(m.refs.get(n) || []).length}</td></tr>`;
+    }).join('');
+    el.innerHTML = `<input class="search" type="search" id="paramFilter" placeholder="パラメータ名で検索（例: Length, LFHD）" value="${esc(S.ui.paramFilter)}" aria-label="パラメータを検索">
+      <div class="filters">${GROUPS.map(([k, l]) => `<button data-act="pgroup" data-g="${k}" aria-pressed="${S.ui.paramGroup === k}">${l} <span class="mono">${counts[k] || 0}</span></button>`).join('')}</div>
+      <div class="bulk"><span>表示中の ${rows.filter(r => !r.isStatic || S.ui.editStatic).length} 件の VALUE を</span><span>×</span><input class="num" type="number" step="0.01" id="bulkK" value="${S.ui.bulkK}"><label class="check"><input type="checkbox" id="bulkPrior" ${S.ui.bulkPrior ? 'checked' : ''}>PRIOR も</label><button class="btn small" data-act="bulkDo">倍にする</button></div>
+      <label class="check"><input type="checkbox" data-act="editStatic" ${S.ui.editStatic ? 'checked' : ''}>固定値（StaticParameter）も編集する</label>
+      <div class="tablewrap"><table class="ptable"><thead><tr><th>名前</th><th>VALUE</th><th>PRIOR</th><th>SD</th><th>参照</th></tr></thead><tbody>${tr || '<tr><td colspan="5" class="ro" style="text-align:center">該当なし</td></tr>'}</tbody></table></div>
+      ${rows.length > shown.length ? `<button class="btn" data-act="moreParams">さらに表示（残り ${rows.length - shown.length} 件）</button>` : ''}
+      <p class="note">変更した行は名前が色付きになります。値を書き換えると関節の位置も式から再計算します。${syncOn() ? 'ペアの同名パラメータにも同じ比率で反映します。' : ''}</p>`;
+  }
+
+  /* ---------------- check tab ---------------- */
+  function diffStats(role) {
+    const m = S.m[role], o = S.orig[role]; if (!m || !o) return null;
+    return KM.diff(o, m);
+  }
+  function pairIssues() {
+    const a = S.m.labeling, b = S.m.solving; if (!a || !b) return [];
+    const out = [];
+    const onlyA = [...a.markers.keys()].filter(n => !b.markers.has(n) && n !== 'ARIEL' && !a.rbByMarker.has(n));
+    const onlyB = [...b.markers.keys()].filter(n => !a.markers.has(n));
+    if (onlyA.length) out.push({ level: 'warn', msg: `ラベリング側だけにあるマーカー: ${onlyA.join('、')}` });
+    if (onlyB.length) out.push({ level: 'warn', msg: `ソルビング側だけにあるマーカー: ${onlyB.join('、')}` });
+    if (a.markers.has('ARIEL') && !b.markers.has('ARIEL')) out.push({ level: 'info', msg: 'ARIEL はラベリング側だけにあります（Shogun 同梱テンプレートと同じ構成です）' });
+    if (a.baseName !== b.baseName) out.push({ level: 'info', msg: `ファイル名が違います（${a.baseName} と ${b.baseName}）。書き出し時にそろえられます。` });
+    return out;
+  }
+  function renderCheck() {
+    const el = $('#tab-check');
+    if (!A()) { el.innerHTML = '<div class="empty-state">ファイルを開いてください</div>'; return; }
+    const blocks = ['labeling', 'solving'].filter(r => S.m[r]).map(r => {
+      const d = diffStats(r); const m = S.m[r]; const iss = m.validate();
+      const st = (v, l) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`;
+      const list = (arr, label) => arr.length ? `<details class="adv"><summary>${label}（${arr.length}）</summary><div class="chips">${arr.slice(0, 120).map(x => `<span class="chip" style="padding-right:8px">${esc(typeof x === 'string' ? x : x.name + (x.ch ? ' · ' + x.ch.join(', ') : ''))}</span>`).join('')}${arr.length > 120 ? '<span class="note">…</span>' : ''}</div></details>` : '';
+      return `<div class="card"><header><h3>${esc(m.fileName)}</h3><span class="sub">${ROLE_LABEL[r]} · 元のファイルとの差分</span></header>
+        <section><div class="stat-row">${st(d.params.length, 'パラメータ変更')}${st(d.paramsAdded.length + d.paramsRemoved.length, 'パラメータ増減')}${st(d.joints.length, '関節の統計')}${st(d.jointPose, '関節位置の再計算')}${st(d.markersAdded.length + d.markersRemoved.length, 'マーカー増減')}${st(d.markers.length, 'マーカー属性')}${st(d.sticksAdded.length + d.sticksRemoved.length, 'スティック増減')}${st(d.targets.length + d.targetsAdded.length + d.targetsRemoved.length, 'ターゲット')}</div>
+          ${list(d.params, '変更したパラメータ')}${list(d.paramsAdded, '追加したパラメータ')}${list(d.paramsRemoved, '削除したパラメータ')}${list(d.joints, '統計を変えた関節')}${list(d.markersAdded, '追加したマーカー')}${list(d.markersRemoved, '削除したマーカー')}${list(d.markers, '属性を変えたマーカー')}${list(d.sticksAdded, '追加したスティック')}${list(d.sticksRemoved, '削除したスティック')}${list(d.targets, '変更したターゲット')}
+        </section>
+        <section><h4>検証</h4>${iss.length ? iss.map(i => `<div class="issue"><span class="sev ${i.level}">${i.level === 'error' ? 'エラー' : '注意'}</span><span>${esc(i.msg)}</span></div>`).join('') : '<p class="note ok">問題は見つかりませんでした（式の参照、マーカーとターゲットの対応、重複、共分散）。</p>'}</section></div>`;
+    }).join('');
+    const pi = pairIssues();
+    const pair = S.m.labeling && S.m.solving ? `<div class="card"><header><h3 style="font-family:var(--sans);font-size:14px">ペアの整合性</h3></header><section>${pi.length ? pi.map(i => `<div class="issue"><span class="sev ${i.level}">${i.level === 'warn' ? '注意' : '情報'}</span><span>${esc(i.msg)}</span></div>`).join('') : '<p class="note ok">マーカー構成は一致しています。</p>'}</section></div>` : '';
+    const log = S.log.length ? `<ul class="log">${[...S.log].reverse().map(l => `<li><span class="tag">${esc(l.file)}<br>${l.t.toTimeString().slice(0, 5)}</span><span class="what">${esc(l.text)}${l.detail ? `<span class="det">${esc(l.detail)}</span>` : ''}</span></li>`).join('')}</ul>` : '<p class="note">まだ変更はありません。</p>';
+    el.innerHTML = `${blocks}${pair}<div class="card"><header><h3 style="font-family:var(--sans);font-size:14px">変更の履歴</h3><span class="sub">新しい順</span></header><section>${log}</section></div>`;
+  }
+
+  /* ---------------- export ---------------- */
+  function stamp() { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`; }
+  function openExport() {
+    const roles = ['labeling', 'solving'].filter(r => S.m[r]);
+    const base = S.m.labeling ? S.m.labeling.baseName : S.m.solving.baseName;
+    const errs = roles.reduce((a, r) => a + S.m[r].validate().filter(i => i.level === 'error').length, 0);
+    $('#exportBody').innerHTML = `<h2 id="expTitle">書き出し</h2>
+      <p class="note">編集したファイルを ZIP にまとめて保存します。元のファイルは変更しません。Shogun で使う前に元のファイルのバックアップを取ってください。</p>
+      ${roles.map(r => { const m = S.m[r]; const d = diffStats(r); return `<div class="card"><section>
+        <label class="check"><input type="checkbox" data-exp="${r}" checked><b>${ROLE_LABEL[r]}</b>　<span class="mono">${esc(m.fileName)}</span>　<span class="pill">${d.total} 件の変更</span></label>
+        <label class="field">保存するファイル名<div style="display:flex;gap:4px;align-items:center"><input data-expname="${r}" value="${esc((S.demo ? 'Demo' : base) + '_edited')}" spellcheck="false" style="flex:1"><span class="mono">.${m.ext === 'xml' ? (r === 'solving' ? 'vss' : 'vsk') : m.ext}</span></div></label>
+      </section></div>`; }).join('')}
+      <label class="check"><input type="checkbox" id="expReport" checked>変更内容のテキスト（changes.txt）を入れる</label>
+      ${roles.length === 2 ? '<p class="note">ラベリング用とソルビング用は同じ名前にそろえてください。Shogun ではペアを同じサブジェクト名で扱います。</p>' : ''}
+      ${errs ? `<p class="note err">検証エラーが ${errs} 件あります。「変更と検証」タブで内容を確認してから書き出すことをおすすめします。</p>` : ''}
+      <div class="row-btns"><button class="btn primary" data-act="expDo">ZIP で保存</button><button class="btn" data-act="expClose">閉じる</button></div>
+      <p class="note" id="expMsg"></p>`;
+    $('#exportDlg').hidden = false;
+  }
+  function reportText() {
+    const lines = ['VSK・VSS エディタ 変更内容', '作成: ' + new Date().toLocaleString('ja-JP'), ''];
+    for (const r of ['labeling', 'solving']) {
+      const m = S.m[r]; if (!m) continue; const d = diffStats(r);
+      lines.push(`■ ${ROLE_LABEL[r]}: ${m.fileName}（${m.isTemplate ? 'テンプレート' : 'キャリブレーション済み'}）`);
+      for (const p of d.params) lines.push(`  パラメータ ${p.name}: ` + p.ch.map(k => `${k} ${p.from[k] ?? '—'} → ${p.to[k] ?? '—'}`).join(', '));
+      for (const n of d.paramsAdded) lines.push(`  パラメータ追加 ${n}`);
+      for (const n of d.paramsRemoved) lines.push(`  パラメータ削除 ${n}`);
+      for (const j of d.joints) lines.push(`  関節 ${j.name}: ${j.ch.join(', ')}`);
+      if (d.jointPose) lines.push(`  関節位置の再計算: ${d.jointPose} セグメント`);
+      for (const n of d.markersAdded) lines.push(`  マーカー追加 ${n}`);
+      for (const n of d.markersRemoved) lines.push(`  マーカー削除 ${n}`);
+      for (const x of d.markers) lines.push(`  マーカー ${x.name}: ` + x.ch.map(k => `${k} ${x.from[k]} → ${x.to[k]}`).join(', '));
+      for (const s of d.sticksAdded) lines.push(`  スティック追加 ${s}`);
+      for (const s of d.sticksRemoved) lines.push(`  スティック削除 ${s}`);
+      for (const t of d.targets) lines.push(`  ターゲット ${t.name}: ${t.ch.join(', ')}`);
+      for (const n of d.targetsAdded) lines.push(`  ターゲット追加 ${n}`);
+      for (const n of d.targetsRemoved) lines.push(`  ターゲット削除 ${n}`);
+      lines.push('');
+    }
+    lines.push('■ 操作の履歴');
+    for (const l of S.log) lines.push(`  [${l.file}] ${l.t.toLocaleTimeString('ja-JP')} ${l.text}${l.detail ? ' — ' + l.detail : ''}`);
+    return lines.join('\r\n');
+  }
+  async function doExport() {
+    const msg = $('#expMsg');
+    const files = [];
+    for (const r of ['labeling', 'solving']) {
+      const cb = document.querySelector(`[data-exp="${r}"]`); if (!cb || !cb.checked) continue;
+      const m = S.m[r]; const nm = (document.querySelector(`[data-expname="${r}"]`).value || m.baseName).trim().replace(/[\\/:*?"<>|]/g, '_');
+      const ext = m.ext === 'xml' ? (r === 'solving' ? 'vss' : 'vsk') : m.ext;
+      files.push({ name: `${nm}.${ext}`, text: m.serialize() });
+    }
+    if (!files.length) { msg.textContent = '保存するファイルを選んでください'; return; }
+    if ($('#expReport').checked) files.push({ name: 'changes.txt', text: '\ufeff' + reportText() });
+    const done = (what) => { msg.textContent = what; addLog('書き出し ' + files.map(f => f.name).join('、'), what, '—'); };
+    const zipName = `${files[0].name.replace(/\.[^.]+$/, '')}_${stamp()}.zip`;
+    const makeZip = async () => { const zip = new JSZip(); for (const f of files) zip.file(f.name, f.text); return zip.generateAsync({ type: 'blob', compression: 'DEFLATE' }); };
+    const anchor = (blob, name) => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000); };
+    let dl = null; try { dl = await dlPromise; } catch (e) { dl = null; }
+    if (dl) {
+      // inside claude.ai: only allow-listed extensions can be saved, so the .vsk/.vss files travel in a zip
+      if (typeof JSZip === 'undefined') { msg.textContent = 'ZIP を作るライブラリを読み込めませんでした。ページを再読み込みしてからもう一度お試しください。'; return; }
+      try { await dl.save({ filename: zipName, data: await makeZip() }); done('保存しました: ' + zipName); }
+      catch (e) { msg.textContent = e && e.code === 'declined' ? '保存はキャンセルされました' : '保存できませんでした（' + (e && (e.message || e.code)) + '）'; }
+      return;
+    }
+    if (typeof JSZip !== 'undefined') { anchor(await makeZip(), zipName); done('ダウンロードを開始しました: ' + zipName); return; }
+    // offline copy without the zip library: save each file on its own
+    files.forEach((f, i) => setTimeout(() => anchor(new Blob([f.text], { type: 'application/octet-stream' }), f.name), i * 400));
+    done('ZIP を作れないため、ファイルを個別に保存しました: ' + files.map(f => f.name).join('、'));
+  }
+
+  /* ---------------- render ---------------- */
+  function keepScroll(fn) {
+    const ids = ['segList', 'markList', 'tab-skel', 'tab-mark', 'tab-param', 'tab-check']; const pos = {};
+    for (const id of ids) { const e = document.getElementById(id); if (e) pos[id] = e.scrollTop; }
+    fn();
+    for (const id of ids) { const e = document.getElementById(id); if (e && pos[id] != null) e.scrollTop = pos[id]; }
+    for (const id of ['segList', 'markList']) {
+      const box = document.getElementById(id); const row = box && box.querySelector('[aria-selected="true"]');
+      if (row && (row.offsetTop < box.scrollTop || row.offsetTop + row.offsetHeight > box.scrollTop + box.clientHeight)) box.scrollTop = row.offsetTop - box.clientHeight / 2;
+    }
+  }
+  // a change event (blur) that re-renders under a pressed pointer would swallow the click; defer it
+  let ptrDown = false, pendingRender = false;
+  document.addEventListener('pointerdown', () => { ptrDown = true; }, true);
+  document.addEventListener('pointerup', () => { ptrDown = false; if (pendingRender) { pendingRender = false; setTimeout(render, 0); } }, true);
+  document.addEventListener('pointercancel', () => { ptrDown = false; }, true);
+  function render() { if (ptrDown) { pendingRender = true; drawScene(); renderHeader(); return; } keepScroll(renderInner); }
+  function renderInner() {
+    renderHeader();
+    document.querySelectorAll('nav.tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === S.tab)));
+    for (const t of ['skel', 'mark', 'param', 'check']) $('#tab-' + t).hidden = t !== S.tab;
+    ({ skel: renderSkel, mark: renderMark, param: renderParam, check: renderCheck })[S.tab]();
+    const n = ['labeling', 'solving'].reduce((a, r) => a + (S.m[r] && S.orig[r] ? diffStats(r).total : 0), 0);
+    $('#changeCount').textContent = n ? String(n) : '';
+    drawScene();
+  }
+
+  /* ---------------- events ---------------- */
+  function select(kind, name, tab) { S.sel = name ? { kind, name } : null; S.ui.confirmDelete = null; S.ui.lastMove = ''; if (tab) S.tab = tab; render(); }
+  document.addEventListener('click', e => {
+    const t = e.target.closest('[data-act], [data-tab], [data-view]'); if (!t) return;
+    if (t.dataset.tab) { S.tab = t.dataset.tab; render(); return; }
+    if (t.dataset.view) { document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', String(b === t))); viewer.view(t.dataset.view); return; }
+    const act = t.dataset.act; const m = A();
+    switch (act) {
+      case 'activate': if (S.active !== t.dataset.role) { S.active = t.dataset.role; S.ui.adding = null; if (S.sel && S.sel.kind === 'segment' && !A().segments.has(S.sel.name)) S.sel = null; if (S.sel && S.sel.kind === 'marker' && !A().markers.has(S.sel.name)) S.sel = null; render(); } break;
+      case 'selSeg': select('segment', t.dataset.name); break;
+      case 'selMarker': select('marker', t.dataset.name); break;
+      case 'flexReset': {
+        const seg = S.sel.name; const st = m.jointStats(seg), os = S.orig[m.role]?.jointStats(seg); if (!os) break;
+        const f = st.dofs.map((d, i) => os.dofs[i]?.sd && d.sd ? os.dofs[i].sd / d.sd : 1);
+        commit('flex', () => ({ log: editFlex(seg, f)[0].replace(/曲がりやすさ.*/, '曲がりやすさを元に戻す') }));
+        break; }
+      case 'shiftCenter': {
+        const seg = S.sel.name; const st = m.jointStats(seg); const isFree = st.seg.jointType === 'JointFree';
+        const d = st.dofs.map((_, i) => { const v = parseFloat(document.querySelector(`[data-shift="${i}"]`)?.value) || 0; return isFree && i >= 3 ? v : v * Math.PI / 180; });
+        if (d.every(v => !v)) { toast('ずらす角度を入力してください'); break; }
+        commit('center', () => { m.shiftJointCenter(seg, d); let msg = `${seg} 中心を ${d.map(v => fmt(deg(v), 1) + '°').join(' / ')} ずらす`; if (syncOn() && P().segments.get(seg)?.jointType === st.seg.jointType) { P().shiftJointCenter(seg, d); msg += '（ペアにも反映）'; } return { log: msg }; });
+        break; }
+      case 'addMarkerOpen': {
+        S.ui.adding = defaultAdd(m); const mb = midBone(m, S.ui.adding.segment); [S.ui.adding.x, S.ui.adding.y, S.ui.adding.z] = mb;
+        let i = 1; while (m.markers.has('NEW' + i)) i++; S.ui.adding.name = 'NEW' + i; render(); setTimeout(() => document.querySelector('[data-add="name"]')?.select(), 0); break; }
+      case 'addMarkerCancel': S.ui.adding = null; render(); break;
+      case 'addMarkerDo': {
+        const a = S.ui.adding; const W = m.computeWorld(); const local = addLocal(m, W);
+        if (!local) { toast('位置を計算できません。基準マーカーを選んでください', true); break; }
+        const nm = (a.name || '').trim();
+        commit('add', () => {
+          const spec = { name: nm, segment: a.segment, local, status: a.status, radius: +a.radius || 7, rgb: rgbOf(a.color), parametrize: a.parametrize, proto: a.proto || null, sd: +a.sd || 1 };
+          const r = m.addMarker(spec); const det = [`${a.segment} (${local.map(v => fmt(v, 1)).join(', ')})`, r.params.length ? 'パラメータ ' + r.params.join('・') : '数値で固定', r.proto ? 'コピー元 ' + r.proto : ''];
+          if (syncOn()) {
+            const pm = P();
+            if (pm.markers.has(nm)) det.push(ROLE_SHORT[pm.role] + ': 同名マーカーが既にあるため追加しません');
+            else { const pp = pairPlacement(m, pm, a.segment, local, a.pairSeg || null); const r2 = pm.addMarker({ ...spec, segment: pp.segment, local: pp.local, proto: spec.proto && pm.markers.has(spec.proto) ? spec.proto : null }); det.push(`${ROLE_SHORT[pm.role]}: ${pp.segment} (${pp.local.map(v => fmt(v, 1)).join(', ')})`); void r2; }
+          }
+          S.ui.adding = null; S.sel = { kind: 'marker', name: nm };
+          return { log: `マーカー ${nm} を追加`, detail: det.filter(Boolean).join(' · ') };
+        });
+        break; }
+      case 'nudge': case 'moveDo': {
+        const name = S.sel.name; let d;
+        if (act === 'nudge') { d = [0, 0, 0]; d[+t.dataset.axis] = +t.dataset.v; }
+        else d = ['#dx', '#dy', '#dz'].map(s => parseFloat($(s).value) || 0);
+        if (d.every(v => !v)) { toast('移動量を入力してください'); break; }
+        commit('move', () => { const acts = moveMarker(name, d); S.ui.lastMove = acts.join(' / '); return { log: `${name} を (${d.map(v => fmt(v, 1)).join(', ')}) mm 移動`, detail: acts.join(' / ') }; });
+        break; }
+      case 'deleteAsk': S.ui.confirmDelete = S.sel.name; render(); break;
+      case 'deleteCancel': S.ui.confirmDelete = null; render(); break;
+      case 'deleteDo': {
+        const name = S.sel.name;
+        commit('delete', () => {
+          const r = m.deleteMarker(name, { removeParams: S.ui.delParams }); const det = [`ターゲット ${r.targets}・スティック ${r.sticks}` + (r.params.length ? '・パラメータ ' + r.params.join('・') : '')];
+          if (syncOn() && P().markers.has(name)) { const r2 = P().deleteMarker(name, { removeParams: S.ui.delParams }); det.push(`${ROLE_SHORT[P().role]}: ターゲット ${r2.targets}・スティック ${r2.sticks}`); }
+          S.sel = null; S.ui.confirmDelete = null; return { log: `マーカー ${name} を削除`, detail: det.join(' · ') };
+        });
+        break; }
+      case 'stickAdd': {
+        const a = S.sel.name, b = $('#stickTo')?.value; if (!b) break;
+        commit('stick', () => { m.addStick(a, b); let s = ''; if (syncOn() && P().markers.has(a) && P().markers.has(b)) { P().addStick(a, b); s = '（ペアにも）'; } return { log: `スティック ${a}–${b} を追加${s}` }; });
+        break; }
+      case 'stickDel': {
+        const a = S.sel.name, b = t.dataset.other;
+        commit('stick', () => { m.removeStick(a, b); let s = ''; if (syncOn() && P().removeStick(a, b)) s = '（ペアからも）'; return { log: `スティック ${a}–${b} を削除${s}` }; });
+        break; }
+      case 'pgroup': S.ui.paramGroup = t.dataset.g; S.ui.paramLimit = 150; render(); break;
+      case 'moreParams': S.ui.paramLimit += 300; render(); break;
+      case 'bulkDo': {
+        const k = parseFloat($('#bulkK').value); if (!(k > 0) || k === 1) { toast('1 以外の正の倍率を入力してください'); break; }
+        S.ui.bulkK = k; S.ui.bulkPrior = $('#bulkPrior').checked;
+        const rows = paramRows(m).filter(r => !r.isStatic || S.ui.editStatic).filter(r => r.el.hasAttribute('VALUE'));
+        commit('bulk', () => {
+          const pm = syncOn() ? P() : null; let np = 0;
+          for (const r of rows) {
+            const v = parseFloat(r.el.getAttribute('VALUE')); r.el.setAttribute('VALUE', KM.g17(v * k));
+            if (S.ui.bulkPrior && r.el.hasAttribute('PRIOR')) r.el.setAttribute('PRIOR', KM.g17(parseFloat(r.el.getAttribute('PRIOR')) * k));
+            const pe = pm && pm.params.get(r.n); if (pe && pe.tagName === r.el.tagName && pe.hasAttribute('VALUE')) { pe.setAttribute('VALUE', KM.g17(parseFloat(pe.getAttribute('VALUE')) * k)); if (S.ui.bulkPrior && pe.hasAttribute('PRIOR')) pe.setAttribute('PRIOR', KM.g17(parseFloat(pe.getAttribute('PRIOR')) * k)); np++; }
+          }
+          m.invalidate(); m.syncJoints(); if (pm) { pm.invalidate(); pm.syncJoints(); }
+          return { log: `${rows.length} 個のパラメータを ×${k}`, detail: (S.ui.bulkPrior ? 'PRIOR も' : 'VALUE のみ') + (pm ? ` · ペア ${np} 個` : '') + (S.ui.paramFilter ? ` · 検索「${S.ui.paramFilter}」` : '') + ` · 分類 ${GROUPS.find(g => g[0] === S.ui.paramGroup)[1]}` };
+        });
+        break; }
+      case 'expDo': doExport(); break;
+      case 'expClose': $('#exportDlg').hidden = true; break;
+    }
+  });
+  document.addEventListener('change', e => {
+    const t = e.target; const m = A(); if (!m) return;
+    if (t.id === 'kindSel') { m.isTemplate = t.value === 't'; render(); return; }
+    if (t.id === 'syncChk') { S.sync = t.checked; render(); return; }
+    if (t.id === 'optLabels') { viewer.labels = t.checked; viewer.draw(); return; }
+    if (t.id === 'optSticks') { viewer.showSticks = t.checked; viewer.draw(); return; }
+    if (t.id === 'optGhost') { drawScene(); return; }
+    if (t.dataset.add) {
+      const a = S.ui.adding; const k = t.dataset.add;
+      a[k] = t.type === 'checkbox' ? t.checked : t.value;
+      if (['x', 'y', 'z', 'name', 'sd', 'radius', 'color', 'status'].includes(k)) { drawScene(); return; }
+      if (k === 'segment' && a.mode === 'local') [a.x, a.y, a.z] = midBone(m, a.segment);
+      if (k === 'mode' || k === 'ref') { if (a.mode === 'ref' && a.ref) { a.x = a.y = 0; a.z = 0; } if (a.mode === 'world') { const p = addPreview(m, m.computeWorld()); if (p) [a.x, a.y, a.z] = p.map(v => +v.toFixed(1)); } if (a.mode === 'local') [a.x, a.y, a.z] = midBone(m, a.segment); }
+      if (k === 'proto' && a.proto) { const pe = m.markers.get(a.proto); if (pe) { a.radius = +pe.getAttribute('RADIUS') || a.radius; a.color = hexOf(pe.getAttribute('RGB')); a.status = pe.getAttribute('STATUS') || a.status; } }
+      render(); return;
+    }
+    const act = t.dataset.act;
+    if (act === 'symmetric') { S.ui.symmetric = t.checked; return; }
+    if (act === 'linkDofs') { S.ui.linkDofs = t.checked; return; }
+    if (act === 'previewOn') { S.ui.previewOn = t.checked; drawScene(); return; }
+    if (act === 'pdof') { S.ui.previewDof = +t.value; drawScene(); return; }
+    if (act === 'moveShared') { S.ui.moveShared = t.checked; return; }
+    if (act === 'delParams') { S.ui.delParams = t.checked; return; }
+    if (act === 'editStatic') { S.ui.editStatic = t.checked; render(); return; }
+    if (act === 'paramInput') {
+      const v = parseFloat(t.value); if (!isFinite(v)) { toast('数値を入力してください', true); render(); return; }
+      const name = t.dataset.name; if (m.paramInfo(name).value === v) return; commit('param', () => { const msgs = editParam(name, v, { symmetric: S.ui.symmetric }); return { log: msgs[0], detail: msgs.slice(1).join(' · ') }; }); return;
+    }
+    if (act === 'paramRange') { const name = t.dataset.name; const g = S.gestureLog; endGesture(g ? g[0] : null, g ? g.slice(1).join(' · ') : ''); S.gestureLog = null; void name; return; }
+    if (act === 'flexRange') { const g = S.gestureLog; endGesture(g ? g[0] : null, g ? g.slice(1).join(' · ') : ''); S.gestureLog = null; return; }
+    if (act === 'pcell') {
+      const v = parseFloat(t.value); if (!isFinite(v)) { toast('数値を入力してください', true); render(); return; }
+      const name = t.dataset.name, attr = t.dataset.attr;
+      if (parseFloat(m.params.get(name).getAttribute(attr)) === v) return;
+      commit('pcell', () => {
+        if (attr === 'VALUE') { const msgs = editParam(name, v, { prior: false, symmetric: false }); return { log: msgs[0], detail: msgs.slice(1).join(' · ') }; }
+        const el = m.params.get(name); const old = el.getAttribute(attr); el.setAttribute(attr, KM.g17(v)); m.invalidate();
+        let det = '';
+        if (syncOn()) { const pe = P().params.get(name); if (pe && pe.hasAttribute(attr)) { pe.setAttribute(attr, KM.g17(v)); P().invalidate(); det = 'ペアにも同じ値'; } }
+        return { log: `${name} ${attr} ${old} → ${KM.g17(v)}`, detail: det };
+      }); return;
+    }
+    if (act === 'mStatus' || act === 'mRadius' || act === 'mColor') {
+      const name = S.sel.name; const props = act === 'mStatus' ? { status: t.value } : act === 'mRadius' ? { radius: parseFloat(t.value) } : { rgb: rgbOf(t.value) };
+      if (props.radius != null && !(props.radius > 0)) { toast('半径は正の数で入力してください', true); render(); return; }
+      commit('mprops', () => { m.setMarkerProps(name, props); let s = ''; if (syncOn() && P().setMarkerProps(name, props)) s = '（ペアにも）'; return { log: `${name} の ${act === 'mStatus' ? 'STATUS を ' + props.status : act === 'mRadius' ? '半径を ' + props.radius + ' mm' : '色を ' + props.rgb} に変更${s}` }; });
+    }
+  });
+  document.addEventListener('input', e => {
+    const t = e.target; const m = A(); if (!m) return;
+    if (t.id === 'segFilter') { S.ui.segFilter = t.value; renderSkelList(); return; }
+    if (t.id === 'markFilter') { S.ui.markFilter = t.value; renderMarkList(); return; }
+    if (t.id === 'paramFilter') { S.ui.paramFilter = t.value; S.ui.paramLimit = 150; const pos = t.selectionStart; renderParam(); const n = $('#paramFilter'); n.focus(); n.setSelectionRange(pos, pos); return; }
+    if (t.dataset.add && ['x', 'y', 'z', 'name', 'sd', 'radius'].includes(t.dataset.add)) { S.ui.adding[t.dataset.add] = t.value; drawScene(); return; }
+    const act = t.dataset.act;
+    if (act === 'paramRange') {
+      const name = t.dataset.name; beginGesture('p:' + name);
+      const v = parseFloat(t.value); const msgs = editParam(name, v, { symmetric: S.ui.symmetric });
+      if (!S.gestureLog) S.gestureLog = msgs; else S.gestureLog = [S.gestureLog[0].replace(/→ .*/, '→ ' + fmt(v)), ...msgs.slice(1)];
+      const inp = document.querySelector(`input.num[data-act="paramInput"][data-name="${CSS.escape(name)}"]`); if (inp) inp.value = +v.toFixed(4);
+      drawScene(); renderHeader(); return;
+    }
+    if (act === 'flexRange') {
+      const seg = S.sel.name; const i = +t.dataset.dof; const k = Math.pow(2, parseFloat(t.value));
+      beginGesture('f:' + seg + ':' + i + ':' + S.ui.linkDofs);
+      const f = flexFactors(m, seg, k, i); const msgs = editFlex(seg, f);
+      const st = m.jointStats(seg), os = S.orig[m.role]?.jointStats(seg);
+      st.dofs.forEach((d, j) => {
+        const kk = os?.dofs[j]?.sd ? d.sd / os.dofs[j].sd : 1; const lab = document.querySelector(`[data-live="k${j}"]`); if (lab) lab.textContent = kk.toFixed(2) + '×';
+        if (S.ui.linkDofs && j !== i) { const r = document.querySelector(`[data-act="flexRange"][data-dof="${j}"]`); if (r) r.value = Math.log2(kk).toFixed(3); }
+      });
+      S.gestureLog = [`${seg} 曲がりやすさ ${st.dofs.map((d, j) => (os?.dofs[j]?.sd ? d.sd / os.dofs[j].sd : 1).toFixed(2) + '×').join(' / ')}（元の値に対して）`, ...msgs.slice(1)];
+      drawScene(); renderHeader(); return;
+    }
+  });
+  document.addEventListener('toggle', e => { const k = e.target.dataset && e.target.dataset.key; if (k) { if (e.target.open) S.ui.open.add(k); else S.ui.open.delete(k); } }, true);
+  document.addEventListener('keydown', e => {
+    if (e.target.closest('input, select, textarea')) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+    else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
+    else if (e.key === 'Escape' && !$('#exportDlg').hidden) $('#exportDlg').hidden = true;
+  });
+  $('#undoBtn').addEventListener('click', undo); $('#redoBtn').addEventListener('click', redo);
+  $('#exportBtn').addEventListener('click', openExport);
+  $('#exportDlg').addEventListener('click', e => { if (e.target.id === 'exportDlg') $('#exportDlg').hidden = true; });
+  $('#fileInput').addEventListener('change', e => { handleFiles(e.target.files); e.target.value = ''; });
+  $('#hideDemoBand').addEventListener('click', () => { $('#demoBand').hidden = true; });
+  $('#focusBtn').addEventListener('click', focusSel); $('#fitBtn').addEventListener('click', fitView);
+  let dragDepth = 0;
+  window.addEventListener('dragenter', e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { dragDepth++; $('#dropzone').hidden = false; } });
+  window.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $('#dropzone').hidden = true; });
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; $('#dropzone').hidden = true; if (e.dataTransfer?.files?.length) handleFiles(e.dataTransfer.files); });
+
+  /* ---------------- boot ---------------- */
+  const dlPromise = window.claude && typeof window.claude.use === 'function' ? window.claude.use('downloads').catch(() => null) : Promise.resolve(null);
+  viewer = new Viewer($('#cv'), {
+    colors,
+    onPick: h => { if (!h) { if (S.sel) select(null, null); return; } if (h.kind === 'marker') select('marker', h.name, 'mark'); else select('segment', h.name, 'skel'); },
+    onHover: (h, x, y) => { const tip = $('#tip'); if (!h) { tip.hidden = true; return; } const m = A(); const extra = h.kind === 'marker' ? ' · ' + (m.primaryPlacement(h.name)?.segment || '') : ''; tip.textContent = h.name + extra; tip.style.left = x + 'px'; tip.style.top = y + 'px'; tip.hidden = false; },
+  });
+  loadDemo(); render(); fitView();
+  window.__app = { S, handleFiles, render, A, P, editParam, moveMarker, editFlex, reportText, diffStats, viewer };
+})();
+</script>
